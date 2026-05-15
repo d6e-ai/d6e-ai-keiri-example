@@ -3,14 +3,16 @@
 	//
 	// A minimal 1-turn chat UI for general accounting questions. The
 	// LLM is expected to respond in Scenario C (plain markdown, no
-	// ```json``` block) per the workspace prompt rule, so we render the
-	// raw text inside a <pre> element. The Ask page intentionally does
-	// not pass any file refs — it is for free-form accounting questions
-	// rather than journal generation.
+	// ```json``` block) per the workspace prompt rule. The reply is run
+	// through renderMarkdown() so tables, headings, lists, etc. render
+	// the same way they do in the d6e chat UI itself. The Ask page
+	// intentionally does not pass any file refs — it is for free-form
+	// accounting questions rather than journal generation.
 
 	import AlertCircleIcon from '@lucide/svelte/icons/alert-circle';
 	import LoaderCircleIcon from '@lucide/svelte/icons/loader-circle';
 
+	import { renderMarkdown } from '$lib/markdown';
 	import * as m from '$lib/paraglide/messages.js';
 	import { cn } from '$lib/utils';
 
@@ -18,6 +20,8 @@
 	let answer = $state<string | null>(null);
 	let isLoading = $state(false);
 	let errorMessage = $state<string | null>(null);
+
+	const renderedAnswer = $derived(answer ? renderMarkdown(answer) : '');
 
 	async function ask(event: SubmitEvent): Promise<void> {
 		event.preventDefault();
@@ -109,7 +113,9 @@
 
 	{#if answer}
 		<div class="rounded-xl border bg-card p-4 shadow-sm">
-			<pre class="text-sm leading-relaxed break-words whitespace-pre-wrap">{answer}</pre>
+			<div class="prose prose-sm max-w-none dark:prose-invert">
+				{@html renderedAnswer}
+			</div>
 		</div>
 	{/if}
 </div>

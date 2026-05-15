@@ -4,16 +4,23 @@
 	// natural-language comment which re-runs execute-by-intent (see
 	// revise-comment-form.svelte). If the LLM response could not be
 	// parsed into the JSON contract, this component renders a fallback
-	// banner with the raw assistant text so the user is never shown a
-	// blank screen.
+	// banner. The raw text is treated as markdown so prose responses
+	// (headings, lists, tables) render the same way they do in the d6e
+	// chat UI; the "Raw AI response" disclosure still shows the
+	// untouched assistant text for debugging.
 
 	import { AlertTriangleIcon } from '@lucide/svelte';
 
+	import { renderMarkdown } from '$lib/markdown';
 	import * as m from '$lib/paraglide/messages.js';
 	import type { ParseResult } from '$lib/parse-journal';
 	import { cn, formatJpyAmount } from '$lib/utils';
 
 	let { parsed }: { parsed: ParseResult } = $props();
+
+	const renderedFallback = $derived(
+		parsed.kind === 'fallback' ? renderMarkdown(parsed.rawText) : ''
+	);
 </script>
 
 {#if parsed.kind === 'journal'}
@@ -80,7 +87,10 @@
 			<h3 class="text-base font-semibold">{m.journal_parse_warning()}</h3>
 		</div>
 		<p class="text-xs text-muted-foreground">reason: {parsed.reason} — {parsed.detail}</p>
-		<pre
-			class="overflow-x-auto rounded-md border bg-card p-3 text-xs break-words whitespace-pre-wrap">{parsed.rawText}</pre>
+		<div class="rounded-md border bg-card p-4">
+			<div class="prose prose-sm max-w-none dark:prose-invert">
+				{@html renderedFallback}
+			</div>
+		</div>
 	</div>
 {/if}
