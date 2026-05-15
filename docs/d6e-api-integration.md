@@ -6,9 +6,14 @@ written; if d6e changes its API, the relevant files here must be updated.
 
 ## 1. File upload — `/api/v1/workspaces/{workspaceId}/files`
 
-**Hosted by:** d6e Rust API server (`D6E_API_URL`).
+**Hosted by:** d6e Rust API server, exposed under `D6E_API_URL`. In a
+managed d6e deployment the same origin proxies `/api/v1/*` to the Rust
+API, so `D6E_API_URL` and `D6E_FRONTEND_URL` usually point at the same
+host (e.g. `https://b-button.d6e.ai`).
 
-**Auth:** `Authorization: Bearer <JWT>` + `X-Workspace-ID: <UUID>`.
+**Auth:** `Authorization: Bearer <access_token>` + `X-Workspace-ID: <UUID>`.
+The access token is obtained by `src/lib/server/d6e-token.ts` from
+d6e-auth — see section 4 below.
 
 **Request body (JSON):**
 
@@ -45,7 +50,7 @@ turns a browser-sent `multipart/form-data` into the JSON above via
 
 **Hosted by:** d6e SvelteKit frontend (`D6E_FRONTEND_URL`).
 
-**Auth:** `Authorization: Bearer <JWT>` (no cookie required).
+**Auth:** `Authorization: Bearer <access_token>` (no cookie required).
 
 **Request body (JSON):**
 
@@ -107,7 +112,7 @@ upstream response unchanged.
 
 **Hosted by:** d6e SvelteKit frontend (`D6E_FRONTEND_URL`).
 
-**Auth:** `Cookie: auth-token=<JWT>` (admin-on-workspace required).
+**Auth:** `Cookie: auth-token=<access_token>` (admin-on-workspace required).
 **This endpoint does NOT accept Bearer headers** — see [workspace-setup.md](./workspace-setup.md).
 
 **Request body (JSON):**
@@ -141,24 +146,62 @@ the d6e frontend's admin UI for now.
 **Upstream reference:**
 [d6e `packages/frontend/src/routes/api/workspace-prompt-rules/+server.ts`](https://github.com/d6e-ai/d6e/blob/main/packages/frontend/src/routes/api/workspace-prompt-rules/+server.ts).
 
+## 4. Token refresh — `/api/v1/auth/token`
+
+**Hosted by:** d6e-auth (`D6E_AUTH_URL`, e.g. `https://www.d6e.ai`).
+
+**Request body (JSON):**
+
+```json
+{
+	"grant_type": "refresh_token",
+	"refresh_token": "<value of the auth-refresh cookie>",
+	"client_id": "<D6E_AUTH_CLIENT_ID>",
+	"client_secret": "<D6E_AUTH_CLIENT_SECRET>"
+}
+```
+
+**Response (JSON):**
+
+```json
+{
+	"access_token": "eyJhbGciOi...",
+	"refresh_token": "eyJhbGciOi...",
+	"token_type": "Bearer",
+	"expires_in": 3600
+}
+```
+
+Notes:
+
+- The response always rotates `refresh_token`. The example app keeps the
+  refresh token in `.env` (`D6E_REFRESH_TOKEN`) and does **not**
+  persist rotated values — this is acceptable because d6e-auth does not
+  invalidate the original refresh token until it expires (30 days).
+  For longer-lived deployments, persist the new refresh token after
+  each refresh.
+- 4xx responses indicate the refresh token is genuinely rejected
+  (revoked, malformed, or signed with a key d6e-auth no longer knows
+  about). The operator must copy a fresh `auth-refresh` cookie value
+  into `.env` and restart the server.
+- 5xx responses are transient and should be retried after backoff.
+
+**This app's wrapper:**
+[`src/lib/server/d6e-token.ts`](../src/lib/server/d6e-token.ts).
+
+**Upstream reference:**
+[d6e-auth `src/routes/api/v1/auth/token/+server.ts`](https://github.com/d6e-ai/d6e-auth/blob/main/src/routes/api/v1/auth/token/%2Bserver.ts).
+
 ## Auth model summary
 
-| Endpoint                                            | Header                  | Source variable   |
-| --------------------------------------------------- | ----------------------- | ----------------- |
-| `POST /api/v1/workspaces/{id}/files/multipart`      | `Authorization: Bearer` | `D6E_JWT`         |
-| `DELETE /api/v1/workspaces/{id}/files/{fileId}`     | `Authorization: Bearer` | `D6E_JWT`         |
-| `GET /api/v1/workspaces/{id}`                       | `Authorization: Bearer` | `D6E_JWT`         |
-| `POST /api/workflows/execute-by-intent`             | `Authorization: Bearer` | `D6E_JWT`         |
-| `POST /api/workspace-prompt-rules`                  | `Cookie: auth-token`    | `D6E_AUTH_COOKIE` |
+| Endpoint                                | Header / Body                            | Source variable                                                         |
+| --------------------------------------- | ---------------------------------------- | ----------------------------------------------------------------------- |
+| `POST /api/v1/workspaces/{id}/files`    | `Authorization: Bearer <access_token>`   | `getAccessToken()` (cached)                                             |
+| `POST /api/workflows/execute-by-intent` | `Authorization: Bearer <access_token>`   | `getAccessToken()` (cached)                                             |
+| `POST /api/workspace-prompt-rules`      | `Cookie: auth-token=<access_token>`      | `getAccessToken()` at startup of `npm run init`                         |
+| `POST /api/v1/auth/token`               | JSON `client_id` / `client_secret` / `refresh_token` | `D6E_AUTH_CLIENT_ID`, `D6E_AUTH_CLIENT_SECRET`, `D6E_REFRESH_TOKEN`     |
 
-The Bearer token and the cookie value are typically the same JWT, just
-transported on different headers. Make sure both are issued for an
-account that has admin role on the target workspace.
-
-### Same-origin tip for managed deployments
-
-On managed d6e deployments (e.g. `https://b-button.d6e.ai`) the Rust API
-and the SvelteKit frontend are reachable on the **same host** under the
-`/api/v1/...` and `/api/...` prefixes respectively. In that case
-`D6E_API_URL` can be left empty and the app will reuse `D6E_FRONTEND_URL`
-automatically.
+Bearer headers and `auth-token` cookies carry the same JWT — only the
+transport differs. The app obtains that JWT exactly once per ~1 hour by
+exchanging the long-lived refresh token, so operators never have to
+paste short-lived tokens into `.env`.

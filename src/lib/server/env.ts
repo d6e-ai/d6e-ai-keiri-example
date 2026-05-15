@@ -8,6 +8,10 @@
 //      which caller was looking for it (per the project's error-handling
 //      guidelines).
 //
+// Access tokens are intentionally NOT exposed here. They are obtained
+// through src/lib/server/d6e-token.ts which exchanges the long-lived
+// refresh token below for a short-lived access token via d6e-auth.
+//
 // Only $env/dynamic/private is used so that nothing here can be
 // inadvertently bundled into the client.
 
@@ -23,25 +27,12 @@ function requireEnv(name: string, caller: string): string {
 	return value;
 }
 
+export function getD6eApiUrl(caller: string): string {
+	return requireEnv('D6E_API_URL', caller).replace(/\/+$/, '');
+}
+
 export function getD6eFrontendUrl(caller: string): string {
 	return requireEnv('D6E_FRONTEND_URL', caller).replace(/\/+$/, '');
-}
-
-// On managed deployments (e.g. https://b-button.d6e.ai) the Rust API and the
-// SvelteKit frontend share a single origin, so D6E_API_URL can be omitted and
-// we fall back to D6E_FRONTEND_URL. Set D6E_API_URL explicitly only when the
-// Rust API is reachable on a different host (e.g. a separated local dev
-// setup where the API runs on http://localhost:8000).
-export function getD6eApiUrl(caller: string): string {
-	const explicit = env.D6E_API_URL;
-	if (explicit && explicit.length > 0) {
-		return explicit.replace(/\/+$/, '');
-	}
-	return getD6eFrontendUrl(caller);
-}
-
-export function getD6eJwt(caller: string): string {
-	return requireEnv('D6E_JWT', caller);
 }
 
 export function getD6eWorkspaceId(caller: string): string {
@@ -51,4 +42,20 @@ export function getD6eWorkspaceId(caller: string): string {
 		throw new Error(`[env] D6E_WORKSPACE_ID must be a valid UUID (got "${value}" from ${caller}).`);
 	}
 	return value;
+}
+
+export function getD6eAuthUrl(caller: string): string {
+	return requireEnv('D6E_AUTH_URL', caller).replace(/\/+$/, '');
+}
+
+export function getD6eAuthClientId(caller: string): string {
+	return requireEnv('D6E_AUTH_CLIENT_ID', caller);
+}
+
+export function getD6eAuthClientSecret(caller: string): string {
+	return requireEnv('D6E_AUTH_CLIENT_SECRET', caller);
+}
+
+export function getD6eRefreshToken(caller: string): string {
+	return requireEnv('D6E_REFRESH_TOKEN', caller);
 }

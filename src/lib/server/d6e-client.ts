@@ -16,8 +16,15 @@
 //                     and surfaces timeout / abort as D6eClientError flags.
 //
 // All calls are made server-side so the user's browser never sees the
-// D6E_JWT Bearer token. Errors are normalised into D6eClientError so that
-// the calling route handler can decide which HTTP status to surface.
+// d6e access token. The token itself is obtained from ./d6e-token.ts,
+// which exchanges the long-lived refresh token in D6E_REFRESH_TOKEN for a
+// short-lived access token via d6e-auth and caches it in memory. On a
+// 401 we invalidate the cache and retry once so a server that has been
+// running long enough for the upstream token to be revoked recovers
+// without a process restart.
+//
+// Errors are normalised into D6eClientError so that the calling route
+// handler can decide which HTTP status to surface.
 //
 // Why multipart upload?
 //   The Rust API exposes both a JSON+base64 endpoint (`/files`) and a
@@ -25,7 +32,8 @@
 //   the production d6e-auth SNS proxy uses and avoids 33% base64 overhead
 //   on large attachments, which matters for receipt photos.
 
-import { getD6eApiUrl, getD6eFrontendUrl, getD6eJwt, getD6eWorkspaceId } from './env';
+import { getAccessToken, invalidateAccessToken } from './d6e-token';
+import { getD6eApiUrl, getD6eFrontendUrl, getD6eWorkspaceId } from './env';
 
 // Default per-file upload timeout, matching the d6e-auth proxy contract.
 const UPLOAD_TIMEOUT_MS = 60_000;
@@ -136,28 +144,42 @@ export async function uploadFile(
 ): Promise<UploadFileResult> {
 	const apiUrl = getD6eApiUrl(caller);
 	const workspaceId = getD6eWorkspaceId(caller);
-	const jwt = getD6eJwt(caller);
 
 	const contentType = payload.contentType || 'application/octet-stream';
 	const sizeBytes = payload.content.byteLength;
 
+	// FormData itself is reusable across retries because it does not consume
+	// its underlying blobs until fetch() reads them, but we still need a
+	// fresh AbortSignal per attempt so the timeout is reset on the retry.
 	const formData = new FormData();
 	const blob = new Blob([new Uint8Array(payload.content)], { type: contentType });
 	formData.append('file', blob, payload.filename);
 	formData.append('metadata', JSON.stringify({ source: 'd6e-ai-keiri-example' }));
 
 	const url = `${apiUrl}/api/v1/workspaces/${workspaceId}/files/multipart`;
-	let response: Response;
-	try {
-		response = await fetch(url, {
+	const doFetch = async (): Promise<Response> => {
+		const accessToken = await getAccessToken(caller);
+		return fetch(url, {
 			method: 'POST',
 			headers: {
-				Authorization: `Bearer ${jwt}`,
+				Authorization: `Bearer ${accessToken}`,
 				'X-Workspace-ID': workspaceId
 			},
 			body: formData,
 			signal: buildCombinedSignal(UPLOAD_TIMEOUT_MS, payload.signal)
 		});
+	};
+
+	let response: Response;
+	try {
+		response = await doFetch();
+		// 401 usually means the cached access token expired between the
+		// last refresh check and the upstream call (clock skew or aggressive
+		// revocation). Drop the cache and retry once with a fresh token.
+		if (response.status === 401) {
+			invalidateAccessToken();
+			response = await doFetch();
+		}
 	} catch (err) {
 		if (payload.signal?.aborted) {
 			throw new D6eClientError(
@@ -220,18 +242,21 @@ export async function uploadFile(
 export async function deleteFile(caller: string, fileId: string): Promise<void> {
 	const apiUrl = getD6eApiUrl(caller);
 	const workspaceId = getD6eWorkspaceId(caller);
-	const jwt = getD6eJwt(caller);
 
 	const url = `${apiUrl}/api/v1/workspaces/${workspaceId}/files/${fileId}`;
 	try {
+		const accessToken = await getAccessToken(caller);
 		const response = await fetch(url, {
 			method: 'DELETE',
 			headers: {
-				Authorization: `Bearer ${jwt}`,
+				Authorization: `Bearer ${accessToken}`,
 				'X-Workspace-ID': workspaceId
 			},
 			signal: AbortSignal.timeout(DELETE_TIMEOUT_MS)
 		});
+		// Best-effort: a 401 here means the cached token expired but cleanup
+		// is not worth the round-trip to refresh — the caller is already
+		// raising a separate error to the user. Just log and move on.
 		if (!response.ok && response.status !== 404) {
 			const body = await readUpstreamBody(response);
 			console.error(
@@ -266,7 +291,6 @@ export async function executeByIntent(
 ): Promise<IntentResponse> {
 	const frontendUrl = getD6eFrontendUrl(caller);
 	const workspaceId = getD6eWorkspaceId(caller);
-	const jwt = getD6eJwt(caller);
 
 	const timeoutMs = options?.timeoutMs ?? DEFAULT_INTENT_TIMEOUT_MS;
 	const externalSignal = options?.signal;
@@ -287,17 +311,29 @@ export async function executeByIntent(
 			body.inputFileRefs && body.inputFileRefs.length > 0 ? body.inputFileRefs : undefined
 	};
 
-	let response: Response;
-	try {
-		response = await fetch(`${frontendUrl}/api/workflows/execute-by-intent`, {
+	const requestUrl = `${frontendUrl}/api/workflows/execute-by-intent`;
+	const doFetch = async (): Promise<Response> => {
+		const accessToken = await getAccessToken(caller);
+		return fetch(requestUrl, {
 			method: 'POST',
 			headers: {
-				Authorization: `Bearer ${jwt}`,
+				Authorization: `Bearer ${accessToken}`,
 				'Content-Type': 'application/json'
 			},
 			body: JSON.stringify(requestBody),
 			signal: buildCombinedSignal(timeoutMs, externalSignal)
 		});
+	};
+
+	let response: Response;
+	try {
+		response = await doFetch();
+		// Same auto-recovery as uploadFile: if the upstream token was revoked
+		// while we were idle, drop the cache and retry once.
+		if (response.status === 401) {
+			invalidateAccessToken();
+			response = await doFetch();
+		}
 	} catch (err) {
 		if (externalSignal?.aborted) {
 			throw new D6eClientError(

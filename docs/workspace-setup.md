@@ -28,11 +28,16 @@ overwritten the next time someone re-runs the script.
 
 ## Required environment variables
 
-| Variable           | Where to find it                                                                       |
-| ------------------ | -------------------------------------------------------------------------------------- |
-| `D6E_FRONTEND_URL` | Base URL of the d6e frontend (e.g. `https://b-button.d6e.ai` or `http://localhost:5173`) |
-| `D6E_WORKSPACE_ID` | UUID of the target workspace (visible in the d6e frontend URL when you're inside one)  |
-| `D6E_AUTH_COOKIE`  | Value of the `auth-token` cookie for a logged-in d6e admin session                     |
+`npm run init` reads `.env` automatically via Node's `--env-file` flag.
+
+| Variable                  | Where to find it                                                                      |
+| ------------------------- | ------------------------------------------------------------------------------------- |
+| `D6E_FRONTEND_URL`        | Base URL of the d6e frontend (e.g. `https://b-button.d6e.ai`)                         |
+| `D6E_WORKSPACE_ID`        | UUID of the target workspace (visible in the d6e frontend URL when you're inside one) |
+| `D6E_AUTH_URL`            | Base URL of d6e-auth (`https://www.d6e.ai` for managed instances)                     |
+| `D6E_AUTH_CLIENT_ID`      | OAuth client ID issued by d6e-auth for your d6e instance                              |
+| `D6E_AUTH_CLIENT_SECRET`  | OAuth client secret paired with the client ID                                         |
+| `D6E_REFRESH_TOKEN`       | Value of the `auth-refresh` cookie for a logged-in d6e admin session                  |
 
 ## Why a cookie value (not a Bearer token)?
 
@@ -40,25 +45,36 @@ overwritten the next time someone re-runs the script.
 authenticates via the SvelteKit `cookies` store rather than the
 `Authorization` header. This is asymmetric with `execute-by-intent`
 (Bearer) — track the upstream behaviour at
-[`packages/frontend/src/lib/server/workspace-prompt-rules.ts`](https://github.com/d6e-ai/d6e/blob/main/packages/frontend/src/lib/server/workspace-prompt-rules.ts).
+[`packages/frontend/src/routes/api/workspace-prompt-rules/+server.ts`](https://github.com/d6e-ai/d6e/blob/main/packages/frontend/src/routes/api/workspace-prompt-rules/+server.ts).
 
-The literal cookie content is still the same JWT, just transported on a
-different header.
+The cookie content is the same access token used for Bearer requests,
+just transported on a different header. The init script obtains the
+access token via the d6e-auth refresh flow (no manual JWT pasting
+required) and stamps it into the `auth-token` cookie when calling this
+endpoint.
 
-### How to obtain the cookie value
+## How to obtain the refresh token and OAuth credentials
 
-1. Open the d6e frontend in your browser and log in with an account
-   that has admin role on the target workspace.
+### `D6E_REFRESH_TOKEN`
+
+1. Open the d6e frontend (`D6E_FRONTEND_URL`) in your browser and log
+   in with an account that has admin role on the target workspace.
 2. Open dev tools -> Application (Chrome) / Storage (Firefox) -> Cookies.
 3. Select the `D6E_FRONTEND_URL` host.
-4. Copy the value of the `auth-token` cookie. It looks like
-   `eyJhbGciOi...`.
-5. Paste it into `.env` as `D6E_AUTH_COOKIE=<value>`.
+4. Copy the value of the `auth-refresh` cookie. It is much longer-lived
+   (30 days) than `auth-token`.
+5. Paste it into `.env` as `D6E_REFRESH_TOKEN=<value>`.
 
-The cookie is `HttpOnly`, so this manual copy is unavoidable in the
-B-case integration. The C-case (full integration) plan in
-[`migration-to-full-integration.md`](./migration-to-full-integration.md)
-replaces this with proper d6e-auth OAuth.
+The cookie is `HttpOnly`, so this manual copy is unavoidable for the
+initial setup. After that the app refreshes access tokens automatically
+via the d6e-auth `/api/v1/auth/token` endpoint.
+
+### `D6E_AUTH_CLIENT_ID` and `D6E_AUTH_CLIENT_SECRET`
+
+These are issued by d6e-auth when your d6e instance is registered. Ask
+your d6e administrator or find them in the d6e-auth admin dashboard.
+They are application credentials, not user credentials, so they remain
+stable until the d6e instance is re-registered.
 
 ## Running the script
 
@@ -69,7 +85,8 @@ npm run init
 Successful output:
 
 ```
-[init-workspace] POST http://localhost:5173/api/workspace-prompt-rules (workspaceId=<uuid>)
+[init-workspace] refreshing access token via https://www.d6e.ai/api/v1/auth/token
+[init-workspace] POST https://b-button.d6e.ai/api/workspace-prompt-rules (workspaceId=<uuid>)
 [init-workspace] prompt size: 2853 characters
 [init-workspace] OK - rule id=<uuid> sort_order=0
 [init-workspace] Verify in the d6e frontend: Settings > Workspace > Prompt rules.
@@ -77,16 +94,29 @@ Successful output:
 
 ## Troubleshooting
 
-### `401 Unauthorized`
+### `d6e-auth rejected refresh (status=400)`
 
-Either `D6E_AUTH_COOKIE` is empty, expired, or you copied the wrong
-cookie. Re-login and re-copy. The d6e frontend refreshes the cookie
-silently, so an old value will simply stop working after some time.
+`D6E_REFRESH_TOKEN` is invalid. The most common cause is that the d6e
+frontend silently rotated the cookie while you were logged in. Re-login
+to the d6e frontend, copy the latest `auth-refresh` cookie value, and
+update `.env`.
+
+### `d6e-auth rejected refresh (status=401)`
+
+`D6E_AUTH_CLIENT_ID` or `D6E_AUTH_CLIENT_SECRET` is wrong, or the
+client was revoked. Check the d6e-auth admin dashboard.
+
+### `401 Unauthorized` from `/api/workspace-prompt-rules`
+
+The refresh flow succeeded but the issued access token isn't accepted by
+the d6e frontend. Confirm `D6E_FRONTEND_URL` actually points at the
+same d6e instance the OAuth client was registered for.
 
 ### `403 Forbidden`
 
-The account behind the cookie is not an admin of the target workspace.
-Promote them in the d6e admin UI, or use a different cookie.
+The account behind the refresh token is not an admin of the target
+workspace. Promote them in the d6e admin UI, or use a different
+account's refresh token.
 
 ### `400 content must not exceed 50,000 characters`
 

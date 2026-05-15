@@ -65,13 +65,18 @@ docs/
 
 ## Environment variables
 
-See `.env.example`. The most important constraint: the `D6E_AUTH_COOKIE`
-variable (used only by `npm run init`) must be the value of the
-`auth-token` cookie issued by d6e-auth, not the `D6E_JWT` Bearer token.
-`/api/workspace-prompt-rules` uses cookie-based auth, while
-`/api/workflows/execute-by-intent` and `/api/v1/workspaces/{id}/files`
-use Bearer auth. The values themselves are identical (both are the
-access token), but they're transported on different headers.
+See `.env.example`. The runtime never reads a short-lived access token
+directly — it stores a long-lived refresh token (`D6E_REFRESH_TOKEN`)
+plus the OAuth client credentials (`D6E_AUTH_CLIENT_ID`,
+`D6E_AUTH_CLIENT_SECRET`, `D6E_AUTH_URL`) and exchanges them for an
+access token via `src/lib/server/d6e-token.ts` whenever a request needs
+one. The same module is reused by `scripts/init-workspace.mjs`, which
+stamps the freshly-issued access token into the `Cookie: auth-token=...`
+header required by `/api/workspace-prompt-rules`.
+
+The Bearer headers used by `/api/workflows/execute-by-intent` and
+`/api/v1/workspaces/{id}/files` carry the same access token; only the
+header name differs.
 
 ## LLM output contract
 
