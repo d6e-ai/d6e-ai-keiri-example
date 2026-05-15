@@ -4,54 +4,130 @@ An example AI accounting application that demonstrates how to build a thin
 frontend on top of the [d6e](https://github.com/d6e-ai/d6e) platform's
 `/api/workflows/execute-by-intent` endpoint.
 
-The goal of this repository is to serve as a reference implementation that
-covers the full integration story: a SvelteKit UI, a small server-side proxy
-for the d6e API, a workspace bootstrap script for the AI prompt, and the
-related documentation — all in one place.
+## What this app does
 
-## Status
+The user uploads a receipt image, the AI generates a freee-compatible
+journal entry, and the user revises it with free-form Japanese until it
+looks right. There is no real accounting backend — this repository exists
+to show how to wire up d6e for a single-purpose vertical app.
 
-Initial implementation is in progress. The first feature PR adds the
-SvelteKit application, the d6e API proxy, the workspace bootstrap script,
-and the operator documentation. See the open issues and pull requests for
-the latest status.
+````mermaid
+sequenceDiagram
+    participant User as Browser
+    participant App as d6e-ai-keiri-example (this app)
+    participant Files as d6e API (files)
+    participant Intent as d6e SvelteKit (/api/workflows/execute-by-intent)
+    participant LLM as LLM via MCP
 
-## Concept
+    User->>App: Upload receipt image
+    App->>Files: POST /api/v1/workspaces/{wsId}/files
+    Files-->>App: { id: fileId }
+    App->>Intent: POST execute-by-intent (message, inputFileRefs)
+    Intent->>LLM: generateText with MCP tools
+    LLM-->>Intent: ```json {"kind":"journal","entries":[...]} ```
+    Intent-->>App: IntentResponse
+    App-->>User: Render journal table (or markdown fallback)
+````
 
-This application is modeled after a mock design (Google Workspace inspired)
-where the user uploads receipt images and an AI assistant produces
-freee-compatible journal entries:
+## Repository contents
 
-1. The user uploads one or more receipt images on the AI journal page.
-2. The frontend forwards each file to d6e's storage API, then asks d6e to
-   produce a structured journal entry by calling
-   `POST /api/workflows/execute-by-intent`.
-3. The response is parsed as a strict JSON contract enforced through a
-   workspace-level prompt rule and rendered as a read-only journal table.
-4. To revise an entry, the user submits a natural-language correction; the
-   previous JSON is re-sent to d6e together with the correction so the LLM
-   regenerates the entry.
+```
+.
+├── src/                   # SvelteKit app (UI + /api/upload + /api/intent)
+├── scripts/
+│   ├── init-workspace.mjs # Register the AI accounting prompt rule
+│   └── prompts/
+│       └── ai-keiri-prompt.md  # SINGLE SOURCE OF TRUTH for LLM behaviour
+├── docs/
+│   ├── architecture.md
+│   ├── d6e-api-integration.md
+│   ├── workspace-setup.md
+│   ├── llm-output-contract.md
+│   └── migration-to-full-integration.md
+└── .env.example
+```
 
-The repository deliberately stays within the "thin integration" scope so it
-remains small enough for one engineer to read end-to-end. A roadmap for the
-full integration (d6e-auth login, multi-workspace support, dedicated STFs,
-persistent task storage) is documented under `docs/migration-to-full-integration.md`
-once the first PR lands.
+## Tech stack
 
-## Planned Tech Stack
-
-- [SvelteKit](https://svelte.dev/docs/kit) + [Svelte 5](https://svelte.dev/docs/svelte) (Runes)
-- [Tailwind CSS v4](https://tailwindcss.com/) + [shadcn-svelte](https://www.shadcn-svelte.com/)
+- [SvelteKit](https://svelte.dev/docs/kit) + [Svelte 5](https://svelte.dev/docs/svelte) (Runes) + TypeScript strict
+- [Tailwind CSS v4](https://tailwindcss.com/) (utility-first design tokens, no shadcn CLI dependency at runtime)
 - [Paraglide](https://inlang.com/m/gerre34r/library-inlang-paraglideJs) for i18n (`ja-JP`, `en-US`)
 - [@lucide/svelte](https://lucide.dev/) for icons
+- [Zod 4](https://zod.dev/) for JSON contract validation
 - [@sveltejs/adapter-vercel](https://svelte.dev/docs/kit/adapter-vercel)
 
-## Related Links
+## Getting started
 
-- Reference mock (Google Workspace inspired): <https://ai-keiri-design-google-workspace.pages.dev/>
-- Reference mock (b/E style): <https://ai-keiri-design-front.pages.dev/>
-- Upstream d6e platform: <https://github.com/d6e-ai/d6e>
-- Sibling reference frontend: <https://github.com/d6e-ai/d6e-construction-frontend>
+### Prerequisites
+
+- Node.js >= 20 (Node 22+ recommended; the lockfile is built against 20.18.2)
+- A running d6e backend you can reach over HTTP. For local development this
+  means `d6e` (the Rust API + the SvelteKit frontend) running on its default
+  ports.
+- A workspace UUID in that d6e instance where you have admin access.
+
+### 1. Install
+
+```bash
+npm install
+```
+
+### 2. Configure environment variables
+
+Copy `.env.example` to `.env` and fill in the five values:
+
+| Variable           | Used by                      | How to obtain                                                                        |
+| ------------------ | ---------------------------- | ------------------------------------------------------------------------------------ |
+| `D6E_API_URL`      | `/api/upload`                | Base URL of the d6e Rust API (e.g. `http://localhost:8000`)                          |
+| `D6E_FRONTEND_URL` | `/api/intent` + init         | Base URL of the d6e SvelteKit frontend (e.g. `http://localhost:5173`)                |
+| `D6E_JWT`          | `/api/upload`, `/api/intent` | `auth-token` cookie value from a logged-in d6e session (used as Bearer token)        |
+| `D6E_WORKSPACE_ID` | all calls                    | UUID of the d6e workspace this app should operate on                                 |
+| `D6E_AUTH_COOKIE`  | `npm run init` only          | Same `auth-token` cookie value, sent as a `Cookie:` header for cookie-auth endpoints |
+
+> The `auth-token` cookie is `HttpOnly`, so you'll need to copy it from
+> the browser dev tools (`Application` -> `Cookies`) after logging in to
+> the d6e frontend.
+
+### 3. Bootstrap the workspace (one-time)
+
+```bash
+npm run init
+```
+
+This POSTs the contents of [`scripts/prompts/ai-keiri-prompt.md`](./scripts/prompts/ai-keiri-prompt.md)
+to `/api/workspace-prompt-rules` so the LLM running inside
+`execute-by-intent` knows to produce the strict JSON journal format. Run
+once per workspace. See [docs/workspace-setup.md](./docs/workspace-setup.md)
+for troubleshooting.
+
+### 4. Run the dev server
+
+```bash
+npm run dev
+```
+
+Open <http://localhost:5173> (or whichever port Vite assigns) and try the
+AI Journal page.
+
+## Documentation
+
+- [`docs/architecture.md`](./docs/architecture.md) — request flow and directory layout
+- [`docs/d6e-api-integration.md`](./docs/d6e-api-integration.md) — exact request/response payloads
+- [`docs/workspace-setup.md`](./docs/workspace-setup.md) — `npm run init` deep dive
+- [`docs/llm-output-contract.md`](./docs/llm-output-contract.md) — JSON schema, scenarios, parse fallback
+- [`docs/migration-to-full-integration.md`](./docs/migration-to-full-integration.md) — roadmap toward the full d6e-auth/STF integration (C-case)
+
+## Status & caveats
+
+- `/api/workflows/execute-by-intent` is internal to d6e and has no
+  stability guarantee. If the upstream contract changes, this app will
+  need to follow.
+- This example uses a single shared workspace and a single shared JWT.
+  Per-user authentication is intentionally out of scope; see
+  `docs/migration-to-full-integration.md` for the multi-user roadmap.
+- The journal table is read-only. Revisions happen by sending a
+  natural-language correction back to the LLM (see
+  `docs/llm-output-contract.md`).
 
 ## License
 
