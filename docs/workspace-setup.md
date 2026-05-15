@@ -30,7 +30,7 @@ overwritten the next time someone re-runs the script.
 
 | Variable           | Where to find it                                                                       |
 | ------------------ | -------------------------------------------------------------------------------------- |
-| `D6E_FRONTEND_URL` | Base URL of the d6e frontend (e.g. `http://localhost:5173`)                            |
+| `D6E_FRONTEND_URL` | Base URL of the d6e frontend (e.g. `https://b-button.d6e.ai` or `http://localhost:5173`) |
 | `D6E_WORKSPACE_ID` | UUID of the target workspace (visible in the d6e frontend URL when you're inside one)  |
 | `D6E_AUTH_COOKIE`  | Value of the `auth-token` cookie for a logged-in d6e admin session                     |
 

@@ -143,12 +143,22 @@ the d6e frontend's admin UI for now.
 
 ## Auth model summary
 
-| Endpoint                                | Header                | Source variable      |
-| --------------------------------------- | --------------------- | -------------------- |
-| `POST /api/v1/workspaces/{id}/files`    | `Authorization: Bearer` | `D6E_JWT`            |
-| `POST /api/workflows/execute-by-intent` | `Authorization: Bearer` | `D6E_JWT`            |
-| `POST /api/workspace-prompt-rules`      | `Cookie: auth-token`    | `D6E_AUTH_COOKIE`    |
+| Endpoint                                            | Header                  | Source variable   |
+| --------------------------------------------------- | ----------------------- | ----------------- |
+| `POST /api/v1/workspaces/{id}/files/multipart`      | `Authorization: Bearer` | `D6E_JWT`         |
+| `DELETE /api/v1/workspaces/{id}/files/{fileId}`     | `Authorization: Bearer` | `D6E_JWT`         |
+| `GET /api/v1/workspaces/{id}`                       | `Authorization: Bearer` | `D6E_JWT`         |
+| `POST /api/workflows/execute-by-intent`             | `Authorization: Bearer` | `D6E_JWT`         |
+| `POST /api/workspace-prompt-rules`                  | `Cookie: auth-token`    | `D6E_AUTH_COOKIE` |
 
 The Bearer token and the cookie value are typically the same JWT, just
 transported on different headers. Make sure both are issued for an
 account that has admin role on the target workspace.
+
+### Same-origin tip for managed deployments
+
+On managed d6e deployments (e.g. `https://b-button.d6e.ai`) the Rust API
+and the SvelteKit frontend are reachable on the **same host** under the
+`/api/v1/...` and `/api/...` prefixes respectively. In that case
+`D6E_API_URL` can be left empty and the app will reuse `D6E_FRONTEND_URL`
+automatically.

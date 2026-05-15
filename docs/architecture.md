@@ -85,9 +85,9 @@ messages/
 | Module                                                      | Responsibility                                                                                            |
 | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
 | `src/lib/server/env.ts`                                     | Validate `D6E_*` env vars on first read with clear error messages.                                        |
-| `src/lib/server/d6e-client.ts`                              | `uploadFile()` / `executeByIntent()` — single place that injects Bearer JWT and normalises upstream errors. |
-| `src/routes/api/upload/+server.ts`                          | Accepts `multipart/form-data` and forwards each file to d6e Storage.                                      |
-| `src/routes/api/intent/+server.ts`                          | Accepts JSON `{ message, inputFileRefs? }` and forwards to execute-by-intent, injecting `workspaceId`.    |
+| `src/lib/server/d6e-client.ts`                              | `uploadFile()` / `deleteFile()` / `executeByIntent()` — single place that injects Bearer JWT, applies bounded timeouts and AbortSignals, and normalises upstream errors. |
+| `src/routes/api/upload/+server.ts`                          | Accepts `multipart/form-data` and forwards each file as multipart to d6e Storage.                         |
+| `src/routes/api/intent/+server.ts`                          | Accepts JSON `{ message, inputFileRefs? }` and forwards to execute-by-intent, injecting `workspaceId`. Best-effort cleanup of orphaned file refs on hard upstream failures. |
 | `src/lib/parse-journal.ts`                                  | Pulls the first valid ` ```json ` block out of the assistant response and validates it with Zod.          |
 | `src/lib/components/journal-result.svelte`                  | Renders the parsed journal as a read-only table; falls back to raw text on parse failure.                 |
 | `src/lib/components/revise-comment-form.svelte`             | Captures the user's natural-language revision request and forwards it to the page.                        |
