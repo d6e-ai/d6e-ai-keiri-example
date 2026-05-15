@@ -67,16 +67,22 @@ docs/
 
 See `.env.example`. The runtime never reads a short-lived access token
 directly — it stores a long-lived refresh token (`D6E_REFRESH_TOKEN`)
-plus the OAuth client credentials (`D6E_AUTH_CLIENT_ID`,
-`D6E_AUTH_CLIENT_SECRET`, `D6E_AUTH_URL`) and exchanges them for an
-access token via `src/lib/server/d6e-token.ts` whenever a request needs
-one. The same module is reused by `scripts/init-workspace.mjs`, which
-stamps the freshly-issued access token into the `Cookie: auth-token=...`
-header required by `/api/workspace-prompt-rules`.
+and exchanges it for an access token by POSTing to
+`${D6E_BASE_URL}/api/v1/auth/token` whenever a request needs one
+(`src/lib/server/d6e-token.ts`). The same module is reused by
+`scripts/init-workspace.mjs`, which stamps the freshly-issued access
+token into the `Cookie: auth-token=...` header required by
+`/api/workspace-prompt-rules`.
+
+No `D6E_AUTH_CLIENT_ID` / `D6E_AUTH_CLIENT_SECRET` are needed: the
+`b-button` instance already knows which OAuth client backs it, and
+issues tokens whose `aud` claim matches the same instance that
+validates them.
 
 The Bearer headers used by `/api/workflows/execute-by-intent` and
-`/api/v1/workspaces/{id}/files` carry the same access token; only the
-header name differs.
+`/api/v1/workspaces/{id}/files` and the `Cookie: auth-token=...` value
+used by `/api/workspace-prompt-rules` and `/api/chat-sessions` all
+carry the same access token; only the header name differs.
 
 ## LLM output contract
 

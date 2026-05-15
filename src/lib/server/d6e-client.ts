@@ -1,6 +1,6 @@
 // Thin server-side wrapper around the d6e REST endpoints used by this app.
 //
-// Three surfaces are exposed:
+// Surfaces exposed:
 //   - uploadFile():   POST /api/v1/workspaces/{wsId}/files/multipart on the
 //                     d6e Rust API. Uploads a single binary as multipart/form-data
 //                     and returns the storage UUID + mimeType + sizeBytes so the
@@ -14,6 +14,13 @@
 //                     file references. Supports an external AbortSignal and a
 //                     bounded timeout (default 270s, below Vercel's 300s cap)
 //                     and surfaces timeout / abort as D6eClientError flags.
+//   - listChatSessions() / getChatSessionById() / createChatSession() /
+//     updateChatSession() / deleteChatSession(): CRUD against the d6e
+//     SvelteKit /api/chat-sessions surface. These use COOKIE auth
+//     (auth-token=<accessToken>) rather than Bearer because d6e's chat
+//     session API resolves the user via locals.user, which only the
+//     hooks.server cookie pipeline populates. The cookie value is the
+//     same JWT we use as Bearer elsewhere.
 //
 // All calls are made server-side so the user's browser never sees the
 // d6e access token. The token itself is obtained from ./d6e-token.ts,
@@ -33,7 +40,7 @@
 //   on large attachments, which matters for receipt photos.
 
 import { getAccessToken, invalidateAccessToken } from './d6e-token';
-import { getD6eApiUrl, getD6eFrontendUrl, getD6eWorkspaceId } from './env';
+import { getD6eUrl, getD6eWorkspaceId } from './env';
 
 // Default per-file upload timeout, matching the d6e-auth proxy contract.
 const UPLOAD_TIMEOUT_MS = 60_000;
@@ -142,7 +149,7 @@ export async function uploadFile(
 		signal?: AbortSignal;
 	}
 ): Promise<UploadFileResult> {
-	const apiUrl = getD6eApiUrl(caller);
+	const apiUrl = getD6eUrl(caller);
 	const workspaceId = getD6eWorkspaceId(caller);
 
 	const contentType = payload.contentType || 'application/octet-stream';
@@ -240,7 +247,7 @@ export async function uploadFile(
  * caller can still propagate the original error.
  */
 export async function deleteFile(caller: string, fileId: string): Promise<void> {
-	const apiUrl = getD6eApiUrl(caller);
+	const apiUrl = getD6eUrl(caller);
 	const workspaceId = getD6eWorkspaceId(caller);
 
 	const url = `${apiUrl}/api/v1/workspaces/${workspaceId}/files/${fileId}`;
@@ -289,7 +296,7 @@ export async function executeByIntent(
 	body: { message: string; inputFileRefs?: IntentInputFileRef[] },
 	options?: { timeoutMs?: number; signal?: AbortSignal }
 ): Promise<IntentResponse> {
-	const frontendUrl = getD6eFrontendUrl(caller);
+	const frontendUrl = getD6eUrl(caller);
 	const workspaceId = getD6eWorkspaceId(caller);
 
 	const timeoutMs = options?.timeoutMs ?? DEFAULT_INTENT_TIMEOUT_MS;
@@ -380,5 +387,212 @@ export async function executeByIntent(
 	} catch (err) {
 		const msg = err instanceof Error ? err.message : String(err);
 		throw new D6eClientError(`execute-by-intent returned non-JSON body: ${msg}`, 502, responseText);
+	}
+}
+
+// Default timeout for chat-session CRUD. These calls are small JSON
+// requests against the d6e SvelteKit DB layer so a short ceiling is
+// enough; we keep it well below Vercel's function cap.
+const CHAT_SESSIONS_TIMEOUT_MS = 30_000;
+
+// Loose UIMessage shape. We do not validate the structure here because
+// d6e accepts both legacy Message[] rows and AI SDK v5 UIMessage[]; the
+// caller (journal-task.ts) is responsible for narrowing.
+export type ChatSessionMessage = Record<string, unknown>;
+
+export interface ChatSessionRow {
+	id: string;
+	workspaceId: string;
+	title: string | null;
+	messages: ChatSessionMessage[];
+	snsSource: 'slack' | 'discord' | 'line' | null;
+	externalConversationKey: string | null;
+	createdAt: string;
+	updatedAt: string;
+}
+
+/**
+ * Internal helper that performs a JSON request against the d6e SvelteKit
+ * chat-session endpoints using the OAuth access token as the auth-token
+ * cookie. Handles a one-shot 401 retry through invalidateAccessToken().
+ *
+ * The path is appended to D6E_BASE_URL exactly as given so callers stay
+ * explicit about which sub-route they are hitting.
+ */
+async function chatSessionsRequest(
+	caller: string,
+	path: string,
+	init: { method: 'GET' | 'POST' | 'PATCH' | 'DELETE'; body?: unknown }
+): Promise<Response> {
+	const frontendUrl = getD6eUrl(caller);
+	const url = `${frontendUrl}${path}`;
+
+	const doFetch = async (): Promise<Response> => {
+		const accessToken = await getAccessToken(caller);
+		const headers: Record<string, string> = {
+			Cookie: `auth-token=${accessToken}`,
+			Accept: 'application/json'
+		};
+		const fetchInit: RequestInit = {
+			method: init.method,
+			headers,
+			signal: AbortSignal.timeout(CHAT_SESSIONS_TIMEOUT_MS)
+		};
+		if (init.body !== undefined) {
+			headers['Content-Type'] = 'application/json';
+			fetchInit.body = JSON.stringify(init.body);
+		}
+		return fetch(url, fetchInit);
+	};
+
+	let response: Response;
+	try {
+		response = await doFetch();
+		if (response.status === 401) {
+			invalidateAccessToken();
+			response = await doFetch();
+		}
+	} catch (err) {
+		if (isAbortLikeError(err)) {
+			throw new D6eClientError(
+				`chat-sessions ${init.method} ${path} timed out after ${CHAT_SESSIONS_TIMEOUT_MS / 1000}s (${caller})`,
+				504,
+				'',
+				{ timedOut: true }
+			);
+		}
+		throw err;
+	}
+
+	if (!response.ok) {
+		const body = await readUpstreamBody(response);
+		console.error(
+			`[d6e-client] chat-sessions ${init.method} ${path} failed (${caller}): status=${response.status} body=${body.slice(0, 500)}`
+		);
+		throw new D6eClientError(
+			`chat-sessions ${init.method} ${path} failed: ${response.status} ${response.statusText}`,
+			response.status,
+			body
+		);
+	}
+
+	return response;
+}
+
+/**
+ * List every chat_session row that belongs to the given workspace.
+ * Filtering by title prefix / completion suffix is done by the caller
+ * because it depends on UI conventions specific to this app.
+ */
+export async function listChatSessions(
+	caller: string,
+	workspaceId: string
+): Promise<ChatSessionRow[]> {
+	const path = `/api/chat-sessions?workspaceId=${encodeURIComponent(workspaceId)}`;
+	const response = await chatSessionsRequest(caller, path, { method: 'GET' });
+	const body = (await response.json()) as ChatSessionRow[];
+	return Array.isArray(body) ? body : [];
+}
+
+/**
+ * Fetch a single chat_session row by id. Returns 404 as a D6eClientError
+ * with status 404 so the caller can decide whether to surface "not
+ * found" vs. a generic 500.
+ */
+export async function getChatSessionById(
+	caller: string,
+	sessionId: string
+): Promise<ChatSessionRow> {
+	const path = `/api/chat-sessions/${encodeURIComponent(sessionId)}`;
+	const response = await chatSessionsRequest(caller, path, { method: 'GET' });
+	return (await response.json()) as ChatSessionRow;
+}
+
+/**
+ * Create a new chat_session row. The d6e endpoint enforces workspace
+ * membership server-side, so we cannot create rows for arbitrary
+ * workspaces — callers must pass D6E_WORKSPACE_ID.
+ *
+ * `messages` is shaped as AI SDK UIMessage[] in this app but the
+ * underlying column is jsonb so the helper accepts any JSON-serialisable
+ * array.
+ */
+export async function createChatSession(
+	caller: string,
+	args: {
+		workspaceId: string;
+		title: string | null;
+		messages: ChatSessionMessage[];
+	}
+): Promise<ChatSessionRow> {
+	const response = await chatSessionsRequest(caller, '/api/chat-sessions', {
+		method: 'POST',
+		body: args
+	});
+	return (await response.json()) as ChatSessionRow;
+}
+
+/**
+ * Patch a chat_session's title and/or messages. Both fields are
+ * optional. The d6e PATCH handler refreshes `updated_at` automatically.
+ */
+export async function updateChatSession(
+	caller: string,
+	sessionId: string,
+	patch: { title?: string | null; messages?: ChatSessionMessage[] }
+): Promise<ChatSessionRow> {
+	const path = `/api/chat-sessions/${encodeURIComponent(sessionId)}`;
+	const response = await chatSessionsRequest(caller, path, {
+		method: 'PATCH',
+		body: patch
+	});
+	return (await response.json()) as ChatSessionRow;
+}
+
+/**
+ * Delete a chat_session row. d6e additionally cleans up Storage files
+ * referenced by attachments inside `messages`; we rely on that server-
+ * side behaviour rather than tracking attachments here.
+ */
+export async function deleteChatSession(caller: string, sessionId: string): Promise<void> {
+	const path = `/api/chat-sessions/${encodeURIComponent(sessionId)}`;
+	await chatSessionsRequest(caller, path, { method: 'DELETE' });
+}
+
+/**
+ * Shared loader used by both +page.server.ts files to stream the
+ * chat_session row list to the page. Wraps env-variable resolution and
+ * listChatSessions into a single call that folds any failure into the
+ * returned shape, so SSR loaders can render an inline error banner
+ * without the rest of the page crashing.
+ *
+ * The return shape is structurally compatible with TasksFetchResult in
+ * $lib/journal-task; defining it inline keeps this server-only module
+ * from depending on the (client-safe) journal-task module.
+ */
+export async function fetchChatSessionsForCaller(
+	caller: string
+): Promise<{ ok: boolean; rows: ChatSessionRow[]; error?: string }> {
+	let workspaceId: string;
+	try {
+		workspaceId = getD6eWorkspaceId(caller);
+	} catch (err) {
+		const msg = err instanceof Error ? err.message : String(err);
+		console.error(`[${caller}] env error: ${msg}`);
+		return { ok: false, rows: [], error: msg };
+	}
+
+	try {
+		const rows = await listChatSessions(caller, workspaceId);
+		return { ok: true, rows };
+	} catch (err) {
+		const msg =
+			err instanceof D6eClientError
+				? `[${err.status}] ${err.message}`
+				: err instanceof Error
+					? err.message
+					: String(err);
+		console.error(`[${caller}] listChatSessions failed: ${msg}`);
+		return { ok: false, rows: [], error: msg };
 	}
 }

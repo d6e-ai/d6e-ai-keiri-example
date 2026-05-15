@@ -32,7 +32,8 @@ shared in the B-case is the **identity** behind that refresh token
   cookie on every request (mirrors what the d6e frontend does in
   [`packages/frontend/src/lib/server/auth.ts`](https://github.com/d6e-ai/d6e/blob/main/packages/frontend/src/lib/server/auth.ts)).
 - Add a `/login` route that kicks off d6e-auth's `authorization_code`
-  flow (reuses `D6E_AUTH_CLIENT_ID` / `D6E_AUTH_CLIENT_SECRET`) and a
+  flow (will need a real `client_id` / `client_secret` registered with
+  d6e-auth — they are not used by the B-case refresh flow) and a
   `/auth/callback` route that exchanges the code for per-user
   `auth-token` and `auth-refresh` cookies.
 - In `src/lib/server/d6e-client.ts`, take the Bearer token from
