@@ -1,0 +1,16 @@
+# Package Managers
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+bun.lock
+bun.lockb
+
+# Build outputs
+**/dist/
+**/build/
+**/.svelte-kit/
+**/node_modules/
+
+# Generated files
+static/
+src/lib/paraglide/
