@@ -558,3 +558,41 @@ export async function deleteChatSession(caller: string, sessionId: string): Prom
 	const path = `/api/chat-sessions/${encodeURIComponent(sessionId)}`;
 	await chatSessionsRequest(caller, path, { method: 'DELETE' });
 }
+
+/**
+ * Shared loader used by both +page.server.ts files to stream the
+ * chat_session row list to the page. Wraps env-variable resolution and
+ * listChatSessions into a single call that folds any failure into the
+ * returned shape, so SSR loaders can render an inline error banner
+ * without the rest of the page crashing.
+ *
+ * The return shape is structurally compatible with TasksFetchResult in
+ * $lib/journal-task; defining it inline keeps this server-only module
+ * from depending on the (client-safe) journal-task module.
+ */
+export async function fetchChatSessionsForCaller(
+	caller: string
+): Promise<{ ok: boolean; rows: ChatSessionRow[]; error?: string }> {
+	let workspaceId: string;
+	try {
+		workspaceId = getD6eWorkspaceId(caller);
+	} catch (err) {
+		const msg = err instanceof Error ? err.message : String(err);
+		console.error(`[${caller}] env error: ${msg}`);
+		return { ok: false, rows: [], error: msg };
+	}
+
+	try {
+		const rows = await listChatSessions(caller, workspaceId);
+		return { ok: true, rows };
+	} catch (err) {
+		const msg =
+			err instanceof D6eClientError
+				? `[${err.status}] ${err.message}`
+				: err instanceof Error
+					? err.message
+					: String(err);
+		console.error(`[${caller}] listChatSessions failed: ${msg}`);
+		return { ok: false, rows: [], error: msg };
+	}
+}

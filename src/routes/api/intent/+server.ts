@@ -37,7 +37,13 @@
 
 import { json } from '@sveltejs/kit';
 
-import { buildAskTitle, buildJournalTitle } from '$lib/journal-title';
+import {
+	buildAskTitle,
+	buildJournalTitle,
+	isCompletedTitle,
+	isJournalTitle,
+	markCompletedTitle
+} from '$lib/journal-title';
 import { parseJournalMessage } from '$lib/parse-journal';
 import {
 	createChatSession,
@@ -154,7 +160,32 @@ async function persistTurn(args: {
 				userUiMessage,
 				assistantUiMessage
 			];
-			await updateChatSession(callerTag, chatSessionId, { messages });
+
+			const patch: { title?: string; messages: ChatSessionMessage[] } = { messages };
+
+			// Regenerate the title from the new assistant text so the card's
+			// "{date} ¥{total} (N件)" stays in sync with the latest journal.
+			// Without this, a revise turn that changes entry count / amount
+			// would leave the stored title pointing at the original values
+			// while task_card_summary (re-parsed from the new message) shows
+			// the updated ones, producing a visible contradiction. /ask
+			// sessions and any third-party (non-[keiri]) sessions keep
+			// their original title.
+			const existingTitle = existing.title ?? '';
+			if (persistAs === 'journal' && isJournalTitle(existingTitle)) {
+				const parsed = parseJournalMessage(assistantText);
+				if (parsed.kind === 'journal' && parsed.result.entries.length > 0) {
+					let regenerated = buildJournalTitle(parsed, userMessage);
+					if (isCompletedTitle(existingTitle)) {
+						regenerated = markCompletedTitle(regenerated);
+					}
+					if (regenerated !== existingTitle) {
+						patch.title = regenerated;
+					}
+				}
+			}
+
+			await updateChatSession(callerTag, chatSessionId, patch);
 			return { chatSessionId };
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err);

@@ -18,41 +18,15 @@
 // banner by the page component.
 
 import type { TasksFetchResult } from '$lib/journal-task';
-import { D6eClientError, listChatSessions } from '$lib/server/d6e-client';
-import { getD6eWorkspaceId } from '$lib/server/env';
+import { fetchChatSessionsForCaller } from '$lib/server/d6e-client';
 
 import type { PageServerLoad } from './$types';
 
 const CALLER_TAG = '/+page.server.ts (pending)';
 
-async function loadPendingRows(): Promise<TasksFetchResult> {
-	let workspaceId: string;
-	try {
-		workspaceId = getD6eWorkspaceId(CALLER_TAG);
-	} catch (err) {
-		const msg = err instanceof Error ? err.message : String(err);
-		console.error(`[${CALLER_TAG}] env error: ${msg}`);
-		return { ok: false, rows: [], error: msg };
-	}
-
-	try {
-		const rows = await listChatSessions(CALLER_TAG, workspaceId);
-		return { ok: true, rows };
-	} catch (err) {
-		const msg =
-			err instanceof D6eClientError
-				? `[${err.status}] ${err.message}`
-				: err instanceof Error
-					? err.message
-					: String(err);
-		console.error(`[${CALLER_TAG}] listChatSessions failed: ${msg}`);
-		return { ok: false, rows: [], error: msg };
-	}
-}
-
 export const load: PageServerLoad = async () => {
 	// Kick off the network call but do NOT await it; SvelteKit will
 	// stream the resolved value to the browser when it lands.
-	const pendingTasks$ = loadPendingRows();
+	const pendingTasks$: Promise<TasksFetchResult> = fetchChatSessionsForCaller(CALLER_TAG);
 	return { pendingTasks$ };
 };
