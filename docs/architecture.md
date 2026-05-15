@@ -53,7 +53,7 @@ sequenceDiagram
 - The long-lived refresh token (`D6E_REFRESH_TOKEN`) lives only in
   environment variables on this server. It is exchanged for a
   short-lived access token via
-  `${D6E_FRONTEND_URL}/api/v1/auth/token`. That endpoint accepts only
+  `${D6E_BASE_URL}/api/v1/auth/token`. That endpoint accepts only
   the refresh token (no `client_id` / `client_secret`) and issues a
   token whose `aud` claim matches the same `b-button` instance that
   validates it, so audience mismatch is impossible by construction.
@@ -108,7 +108,7 @@ messages/
 | Module                                          | Responsibility                                                                                                                                  |
 | ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | `src/lib/server/env.ts`                         | Validate `D6E_*` env vars on first read with clear error messages.                                                                              |
-| `src/lib/server/d6e-token.ts`                   | Cache the d6e access token in memory and refresh it via `${D6E_FRONTEND_URL}/api/v1/auth/token` before it expires.                              |
+| `src/lib/server/d6e-token.ts`                   | Cache the d6e access token in memory and refresh it via `${D6E_BASE_URL}/api/v1/auth/token` before it expires.                                  |
 | `src/lib/server/d6e-client.ts`                  | Bearer- and cookie-authed fetch wrappers for files / execute-by-intent / chat-sessions; retries each call once on 401 after invalidating cache. |
 | `src/routes/api/upload/+server.ts`              | Accepts `multipart/form-data` and forwards each file to d6e Storage.                                                                            |
 | `src/routes/api/intent/+server.ts`              | Calls `executeByIntent`, then persists user+assistant messages into a `chat_session` (creating or appending depending on `chatSessionId`).      |

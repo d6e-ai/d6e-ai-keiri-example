@@ -6,10 +6,11 @@ written; if d6e changes its API, the relevant files here must be updated.
 
 ## 1. File upload — `/api/v1/workspaces/{workspaceId}/files`
 
-**Hosted by:** d6e Rust API server, exposed under `D6E_API_URL`. In a
-managed d6e deployment the same origin proxies `/api/v1/*` to the Rust
-API, so `D6E_API_URL` and `D6E_FRONTEND_URL` usually point at the same
-host (e.g. `https://b-button.d6e.ai`).
+**Hosted by:** d6e Rust API server, exposed under
+`${D6E_BASE_URL}/api/v1/...`. In a managed d6e deployment a reverse
+proxy on the same origin routes `/api/v1/*` to the Rust API and
+everything else to the SvelteKit frontend, so a single `D6E_BASE_URL`
+covers both surfaces.
 
 **Auth:** `Authorization: Bearer <access_token>` + `X-Workspace-ID: <UUID>`.
 The access token is obtained by `src/lib/server/d6e-token.ts` from
@@ -48,7 +49,8 @@ turns a browser-sent `multipart/form-data` into the JSON above via
 
 ## 2. Natural-language workflow — `/api/workflows/execute-by-intent`
 
-**Hosted by:** d6e SvelteKit frontend (`D6E_FRONTEND_URL`).
+**Hosted by:** d6e SvelteKit frontend, exposed under
+`${D6E_BASE_URL}/api/workflows/...`.
 
 **Auth:** `Authorization: Bearer <access_token>` (no cookie required).
 
@@ -110,7 +112,8 @@ upstream response unchanged.
 
 ## 3. Workspace prompt rule — `/api/workspace-prompt-rules`
 
-**Hosted by:** d6e SvelteKit frontend (`D6E_FRONTEND_URL`).
+**Hosted by:** d6e SvelteKit frontend, exposed under
+`${D6E_BASE_URL}/api/workspace-prompt-rules`.
 
 **Auth:** `Cookie: auth-token=<access_token>` (admin-on-workspace required).
 **This endpoint does NOT accept Bearer headers** — see [workspace-setup.md](./workspace-setup.md).
@@ -148,10 +151,11 @@ the d6e frontend's admin UI for now.
 
 ## 4. Token refresh — `/api/v1/auth/token`
 
-**Hosted by:** the d6e frontend (`D6E_FRONTEND_URL`, e.g.
-`https://b-button.d6e.ai`). The same `b-button` instance both issues
-and validates access tokens, which guarantees the `aud` claim always
-matches.
+**Hosted by:** the d6e frontend, exposed under
+`${D6E_BASE_URL}/api/v1/auth/token` (e.g.
+`https://b-button.d6e.ai/api/v1/auth/token`). The same `b-button`
+instance both issues and validates access tokens, which guarantees the
+`aud` claim always matches.
 
 **Request body (JSON):**
 
@@ -194,7 +198,8 @@ Notes:
 
 ## 5. Chat session persistence — `/api/chat-sessions`
 
-**Hosted by:** the d6e SvelteKit frontend (`D6E_FRONTEND_URL`).
+**Hosted by:** the d6e SvelteKit frontend, exposed under
+`${D6E_BASE_URL}/api/chat-sessions[/...]`.
 
 This app stores every journal run and every general-question run as a
 `chat_session` in d6e so that the AI Journal list survives across page

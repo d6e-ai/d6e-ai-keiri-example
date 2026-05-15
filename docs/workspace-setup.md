@@ -9,7 +9,7 @@ you use the AI Journal page.
 The single source of truth is
 [`scripts/prompts/ai-keiri-prompt.md`](../scripts/prompts/ai-keiri-prompt.md).
 The script reads the file verbatim and POSTs the body to
-`POST {D6E_FRONTEND_URL}/api/workspace-prompt-rules`.
+`POST {D6E_BASE_URL}/api/workspace-prompt-rules`.
 
 The prompt instructs the LLM to:
 
@@ -32,7 +32,7 @@ overwritten the next time someone re-runs the script.
 
 | Variable            | Where to find it                                                                      |
 | ------------------- | ------------------------------------------------------------------------------------- |
-| `D6E_FRONTEND_URL`  | Base URL of the d6e frontend (e.g. `https://b-button.d6e.ai`)                         |
+| `D6E_BASE_URL`      | Base URL of the d6e instance (e.g. `https://b-button.d6e.ai`)                         |
 | `D6E_WORKSPACE_ID`  | UUID of the target workspace (visible in the d6e frontend URL when you're inside one) |
 | `D6E_REFRESH_TOKEN` | Value of the `auth-refresh` cookie for a logged-in d6e admin session                  |
 
@@ -47,24 +47,24 @@ authenticates via the SvelteKit `cookies` store rather than the
 The cookie content is the same access token used for Bearer requests,
 just transported on a different header. The init script obtains the
 access token by refreshing against
-`${D6E_FRONTEND_URL}/api/v1/auth/token` (no client credentials needed)
+`${D6E_BASE_URL}/api/v1/auth/token` (no client credentials needed)
 and stamps it into the `auth-token` cookie when calling this endpoint.
 
 ## How to obtain the refresh token
 
 ### `D6E_REFRESH_TOKEN`
 
-1. Open the d6e frontend (`D6E_FRONTEND_URL`) in your browser and log
+1. Open the d6e frontend (`D6E_BASE_URL`) in your browser and log
    in with an account that has admin role on the target workspace.
 2. Open dev tools -> Application (Chrome) / Storage (Firefox) -> Cookies.
-3. Select the `D6E_FRONTEND_URL` host.
+3. Select the `D6E_BASE_URL` host.
 4. Copy the value of the `auth-refresh` cookie. It is much longer-lived
    (30 days) than `auth-token`.
 5. Paste it into `.env` as `D6E_REFRESH_TOKEN=<value>`.
 
 The cookie is `HttpOnly`, so this manual copy is unavoidable for the
 initial setup. After that the app refreshes access tokens automatically
-via `${D6E_FRONTEND_URL}/api/v1/auth/token`. No `D6E_AUTH_CLIENT_ID` /
+via `${D6E_BASE_URL}/api/v1/auth/token`. No `D6E_AUTH_CLIENT_ID` /
 `D6E_AUTH_CLIENT_SECRET` are needed because the `b-button` instance
 already knows which OAuth client backs it.
 
@@ -96,8 +96,8 @@ update `.env`.
 ### `401 Unauthorized` from `/api/workspace-prompt-rules`
 
 The refresh flow succeeded but the issued access token isn't accepted by
-the d6e frontend. Confirm `D6E_FRONTEND_URL` actually points at the
-same d6e instance the refresh token came from.
+the d6e frontend. Confirm `D6E_BASE_URL` actually points at the same
+d6e instance the refresh token came from.
 
 ### `403 Forbidden`
 

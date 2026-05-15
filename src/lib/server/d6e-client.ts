@@ -40,7 +40,7 @@
 //   on large attachments, which matters for receipt photos.
 
 import { getAccessToken, invalidateAccessToken } from './d6e-token';
-import { getD6eApiUrl, getD6eFrontendUrl, getD6eWorkspaceId } from './env';
+import { getD6eUrl, getD6eWorkspaceId } from './env';
 
 // Default per-file upload timeout, matching the d6e-auth proxy contract.
 const UPLOAD_TIMEOUT_MS = 60_000;
@@ -149,7 +149,7 @@ export async function uploadFile(
 		signal?: AbortSignal;
 	}
 ): Promise<UploadFileResult> {
-	const apiUrl = getD6eApiUrl(caller);
+	const apiUrl = getD6eUrl(caller);
 	const workspaceId = getD6eWorkspaceId(caller);
 
 	const contentType = payload.contentType || 'application/octet-stream';
@@ -247,7 +247,7 @@ export async function uploadFile(
  * caller can still propagate the original error.
  */
 export async function deleteFile(caller: string, fileId: string): Promise<void> {
-	const apiUrl = getD6eApiUrl(caller);
+	const apiUrl = getD6eUrl(caller);
 	const workspaceId = getD6eWorkspaceId(caller);
 
 	const url = `${apiUrl}/api/v1/workspaces/${workspaceId}/files/${fileId}`;
@@ -296,7 +296,7 @@ export async function executeByIntent(
 	body: { message: string; inputFileRefs?: IntentInputFileRef[] },
 	options?: { timeoutMs?: number; signal?: AbortSignal }
 ): Promise<IntentResponse> {
-	const frontendUrl = getD6eFrontendUrl(caller);
+	const frontendUrl = getD6eUrl(caller);
 	const workspaceId = getD6eWorkspaceId(caller);
 
 	const timeoutMs = options?.timeoutMs ?? DEFAULT_INTENT_TIMEOUT_MS;
@@ -416,15 +416,15 @@ export interface ChatSessionRow {
  * chat-session endpoints using the OAuth access token as the auth-token
  * cookie. Handles a one-shot 401 retry through invalidateAccessToken().
  *
- * The path is appended to D6E_FRONTEND_URL exactly as given so callers
- * stay explicit about which sub-route they are hitting.
+ * The path is appended to D6E_BASE_URL exactly as given so callers stay
+ * explicit about which sub-route they are hitting.
  */
 async function chatSessionsRequest(
 	caller: string,
 	path: string,
 	init: { method: 'GET' | 'POST' | 'PATCH' | 'DELETE'; body?: unknown }
 ): Promise<Response> {
-	const frontendUrl = getD6eFrontendUrl(caller);
+	const frontendUrl = getD6eUrl(caller);
 	const url = `${frontendUrl}${path}`;
 
 	const doFetch = async (): Promise<Response> => {

@@ -3,21 +3,21 @@
 // running d6e instance.
 //
 // Usage:
-//   D6E_FRONTEND_URL=... \
+//   D6E_BASE_URL=... \
 //   D6E_WORKSPACE_ID=... \
 //   D6E_REFRESH_TOKEN=... \
 //   npm run init
 //
 // What it does:
 //   1. Exchanges D6E_REFRESH_TOKEN for a fresh access token via
-//      ${D6E_FRONTEND_URL}/api/v1/auth/token. This endpoint accepts the
+//      ${D6E_BASE_URL}/api/v1/auth/token. This endpoint accepts the
 //      refresh token on its own (no client_id / client_secret needed)
 //      and issues a token whose audience matches the same b-button
 //      instance that verifyAccessToken will validate against.
 //   2. Reads scripts/prompts/ai-keiri-prompt.md (the single source of
 //      truth for this app's LLM behaviour).
 //   3. POSTs the content to
-//      {D6E_FRONTEND_URL}/api/workspace-prompt-rules with the new
+//      {D6E_BASE_URL}/api/workspace-prompt-rules with the new
 //      access token as a Cookie header. This endpoint requires
 //      cookie-based auth (not Bearer).
 //   4. The new rule is appended at the end of the existing rule list -
@@ -57,8 +57,8 @@ function trimTrailingSlashes(value) {
 	return value.replace(/\/+$/, '');
 }
 
-async function refreshAccessToken({ frontendUrl, refreshToken }) {
-	const target = `${frontendUrl}/api/v1/auth/token`;
+async function refreshAccessToken({ baseUrl, refreshToken }) {
+	const target = `${baseUrl}/api/v1/auth/token`;
 	let response;
 	try {
 		response = await fetch(target, {
@@ -95,7 +95,7 @@ async function refreshAccessToken({ frontendUrl, refreshToken }) {
 	return parsed.access_token;
 }
 
-const frontendUrl = trimTrailingSlashes(readEnv('D6E_FRONTEND_URL'));
+const baseUrl = trimTrailingSlashes(readEnv('D6E_BASE_URL'));
 const workspaceId = readEnv('D6E_WORKSPACE_ID');
 const refreshToken = readEnv('D6E_REFRESH_TOKEN');
 
@@ -120,13 +120,13 @@ if (Array.from(promptBody).length > MAX_PROMPT_CHARS) {
 	);
 }
 
-console.log(`[init-workspace] refreshing access token via ${frontendUrl}/api/v1/auth/token`);
+console.log(`[init-workspace] refreshing access token via ${baseUrl}/api/v1/auth/token`);
 const accessToken = await refreshAccessToken({
-	frontendUrl,
+	baseUrl,
 	refreshToken
 });
 
-const target = `${frontendUrl}/api/workspace-prompt-rules`;
+const target = `${baseUrl}/api/workspace-prompt-rules`;
 console.log(`[init-workspace] POST ${target} (workspaceId=${workspaceId})`);
 console.log(`[init-workspace] prompt size: ${promptBody.length} characters`);
 

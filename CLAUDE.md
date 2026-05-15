@@ -68,7 +68,7 @@ docs/
 See `.env.example`. The runtime never reads a short-lived access token
 directly — it stores a long-lived refresh token (`D6E_REFRESH_TOKEN`)
 and exchanges it for an access token by POSTing to
-`${D6E_FRONTEND_URL}/api/v1/auth/token` whenever a request needs one
+`${D6E_BASE_URL}/api/v1/auth/token` whenever a request needs one
 (`src/lib/server/d6e-token.ts`). The same module is reused by
 `scripts/init-workspace.mjs`, which stamps the freshly-issued access
 token into the `Cookie: auth-token=...` header required by

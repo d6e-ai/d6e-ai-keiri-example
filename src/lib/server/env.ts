@@ -28,12 +28,20 @@ function requireEnv(name: string, caller: string): string {
 	return value;
 }
 
-export function getD6eApiUrl(caller: string): string {
-	return requireEnv('D6E_API_URL', caller).replace(/\/+$/, '');
-}
-
-export function getD6eFrontendUrl(caller: string): string {
-	return requireEnv('D6E_FRONTEND_URL', caller).replace(/\/+$/, '');
+// Base URL of the d6e instance.
+//
+// Managed deployments (e.g. https://b-button.d6e.ai) expose both the
+// Rust API (/api/v1/...) and the SvelteKit frontend (/api/workflows/...,
+// /api/chat-sessions, /api/v1/auth/token, /api/workspace-prompt-rules)
+// on the same origin via a reverse proxy that routes by path. This
+// example app targets that same-origin deployment shape exclusively, so
+// a single base URL is sufficient.
+//
+// If you ever need to point the Rust API and the SvelteKit frontend at
+// different hosts, reintroduce a dedicated accessor here and update the
+// callers in src/lib/server/d6e-client.ts.
+export function getD6eUrl(caller: string): string {
+	return requireEnv('D6E_BASE_URL', caller).replace(/\/+$/, '');
 }
 
 export function getD6eWorkspaceId(caller: string): string {

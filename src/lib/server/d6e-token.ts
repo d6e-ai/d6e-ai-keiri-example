@@ -9,8 +9,8 @@
 //   - the cached token is within EXPIRY_GRACE_MS of its `exp` claim.
 //
 // Refresh target:
-//   We hit `${D6E_FRONTEND_URL}/api/v1/auth/token` (the d6e frontend's
-//   own token endpoint) rather than a central d6e-auth instance. The
+//   We hit `${D6E_BASE_URL}/api/v1/auth/token` (the d6e frontend's own
+//   token endpoint) rather than a central d6e-auth instance. The
 //   frontend (b-button) proxies refresh through to its own Rust API,
 //   which:
 //     - accepts only `grant_type` + `refresh_token` (no client_id /
@@ -35,7 +35,7 @@
 //     process (e.g. someone logged in again in the same browser) and
 //     the value in D6E_REFRESH_TOKEN must be updated.
 
-import { getD6eFrontendUrl, getD6eRefreshToken } from './env';
+import { getD6eRefreshToken, getD6eUrl } from './env';
 
 interface CachedToken {
 	accessToken: string;
@@ -72,10 +72,10 @@ function decodeJwtExpMs(token: string): number | null {
 }
 
 async function performRefresh(caller: string): Promise<CachedToken> {
-	const frontendUrl = getD6eFrontendUrl(caller);
+	const baseUrl = getD6eUrl(caller);
 	const refreshToken = getD6eRefreshToken(caller);
 
-	const target = `${frontendUrl}/api/v1/auth/token`;
+	const target = `${baseUrl}/api/v1/auth/token`;
 	let response: Response;
 	try {
 		response = await fetch(target, {
