@@ -1,62 +1,95 @@
 <script lang="ts">
-	// Read-only card used in the "pending tasks" list on the AI Journal page
-	// and the "completed tasks" list on /tasks. The card is intentionally
-	// non-interactive in the example; wiring it to a real backend (open
-	// task detail, resume revision, etc.) is C-case work.
+	// Clickable summary card backed by a d6e chat_session row.
+	//
+	// Renders the parsed journal payload (entry count + total amount) when
+	// available, falling back to a "not yet parseable" hint so even rows
+	// whose AI response is still streaming or schema-mismatched still
+	// surface in the task list. Clicking emits a callback so the parent
+	// page can open the detail dialog without coupling this component to
+	// any specific dialog implementation.
 
-	import type { JournalTask } from '$lib/mock-data/tasks';
+	import CheckCircle2Icon from '@lucide/svelte/icons/check-circle-2';
+	import ClockIcon from '@lucide/svelte/icons/clock';
+
+	import type { JournalTaskSummary } from '$lib/journal-task';
+	import { totalJournalAmount } from '$lib/journal-task';
 	import * as m from '$lib/paraglide/messages.js';
 	import { cn, formatJpyAmount } from '$lib/utils';
 
-	let { task }: { task: JournalTask } = $props();
+	let {
+		task,
+		onclick
+	}: {
+		task: JournalTaskSummary;
+		onclick?: (task: JournalTaskSummary) => void;
+	} = $props();
 
-	function statusLabel(status: JournalTask['status']): string {
-		switch (status) {
-			case 'drive_unregistered':
-				return m.journal_status_drive_unregistered();
-			case 'pending_approval':
-				return m.journal_status_pending_approval();
-			case 'revising':
-				return m.journal_status_revising();
-			case 'completed':
-				return m.journal_status_completed();
-		}
+	const total = $derived(totalJournalAmount(task));
+	const entryCount = $derived(task.journal?.entries.length ?? null);
+	const updatedLabel = $derived(formatUpdatedAt(task.updatedAt));
+
+	// Format the chat_session.updated_at timestamp as a locale-aware
+	// "YYYY/MM/DD HH:mm" string so the card communicates recency without
+	// requiring a tooltip. We avoid Intl.RelativeTimeFormat here because
+	// "3 minutes ago" interacts badly with SSR (server and client clocks
+	// can disagree by a second and produce hydration mismatches).
+	function formatUpdatedAt(value: string): string {
+		const date = new Date(value);
+		if (Number.isNaN(date.getTime())) return value;
+		const yyyy = date.getFullYear();
+		const mm = String(date.getMonth() + 1).padStart(2, '0');
+		const dd = String(date.getDate()).padStart(2, '0');
+		const hh = String(date.getHours()).padStart(2, '0');
+		const min = String(date.getMinutes()).padStart(2, '0');
+		return `${yyyy}/${mm}/${dd} ${hh}:${min}`;
 	}
 
-	function statusTone(status: JournalTask['status']): string {
-		switch (status) {
-			case 'drive_unregistered':
-				return 'bg-warning/15 text-warning-foreground';
-			case 'pending_approval':
-				return 'bg-primary/10 text-primary';
-			case 'revising':
-				return 'bg-accent text-accent-foreground';
-			case 'completed':
-				return 'bg-success/15 text-success-foreground';
-		}
+	function handleClick(): void {
+		onclick?.(task);
 	}
 </script>
 
-<article
-	class="flex flex-col gap-2 rounded-xl border bg-card p-4 shadow-sm transition-shadow hover:shadow-md"
+<button
+	type="button"
+	onclick={handleClick}
+	class={cn(
+		'flex w-full flex-col gap-2 rounded-xl border bg-card p-4 text-left shadow-sm transition-shadow',
+		'hover:shadow-md focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none'
+	)}
 >
-	<div class="flex items-center gap-3">
-		<span
-			class={cn(
-				'inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium',
-				statusTone(task.status)
-			)}
-		>
-			{statusLabel(task.status)}
-		</span>
-		<span class="text-xs text-muted-foreground">{task.date}</span>
-		<span class="text-xs text-muted-foreground">
-			{m.journal_pending_count({ count: task.receiptCount })}
-		</span>
-		<span class="text-xs font-medium text-foreground">
-			{m.journal_amount({ amount: formatJpyAmount(task.amountJpy) })}
-		</span>
+	<div class="flex items-center gap-2 text-xs">
+		{#if task.isCompleted}
+			<span
+				class="inline-flex items-center gap-1 rounded-full bg-success/15 px-2.5 py-0.5 font-medium text-success-foreground"
+			>
+				<CheckCircle2Icon class="size-3.5" aria-hidden="true" />
+				{m.task_card_status_completed()}
+			</span>
+		{:else}
+			<span
+				class="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2.5 py-0.5 font-medium text-primary"
+			>
+				<ClockIcon class="size-3.5" aria-hidden="true" />
+				{m.task_card_status_pending()}
+			</span>
+		{/if}
+		<span class="text-muted-foreground">{updatedLabel}</span>
 	</div>
-	<h3 class="text-sm font-semibold text-foreground">{task.title}</h3>
-	<p class="text-sm text-muted-foreground">{task.description}</p>
-</article>
+
+	<h3 class="text-sm font-semibold text-foreground">
+		{task.displayTitle || m.task_card_untitled()}
+	</h3>
+
+	{#if entryCount != null && total != null}
+		<p class="text-xs text-muted-foreground">
+			{m.task_card_summary({
+				count: entryCount,
+				amount: formatJpyAmount(total)
+			})}
+		</p>
+	{:else}
+		<p class="text-xs text-muted-foreground italic">
+			{m.task_card_no_journal()}
+		</p>
+	{/if}
+</button>

@@ -34,7 +34,7 @@
 			const response = await fetch('/api/intent', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ message: trimmed })
+				body: JSON.stringify({ message: trimmed, persistAs: 'ask' })
 			});
 			const payload: unknown = await response.json().catch(() => ({}));
 			if (!response.ok) {
