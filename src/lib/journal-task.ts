@@ -19,6 +19,17 @@ import { COMPLETED_SUFFIX, isCompletedTitle, isJournalTitle, KEIRI_PREFIX } from
 import { parseJournalMessage, type ParseResult } from './parse-journal';
 import type { ChatSessionMessage, ChatSessionRow } from './server/d6e-client';
 
+/**
+ * Shared shape returned by the SSR loaders for the AI Journal page and
+ * the Completed Tasks page. Both pages fetch the same chat_session
+ * rows; filtering happens on the client via filterJournalSessions().
+ */
+export interface TasksFetchResult {
+	ok: boolean;
+	rows: ChatSessionRow[];
+	error?: string;
+}
+
 export interface JournalTaskSummary {
 	id: string;
 	title: string;

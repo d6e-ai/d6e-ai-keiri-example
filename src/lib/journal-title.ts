@@ -21,6 +21,7 @@
 // we ever decide to add tests.
 
 import type { ParseResult } from './parse-journal';
+import { formatJpyAmount } from './utils';
 
 export const KEIRI_PREFIX = '[keiri] ';
 export const ASK_PREFIX = '[keiri-ask] ';
@@ -36,10 +37,6 @@ function truncate(value: string, maxChars: number): string {
 	return `${cleaned.slice(0, maxChars - 1).trimEnd()}…`;
 }
 
-function formatJpy(value: number): string {
-	return value.toLocaleString('ja-JP');
-}
-
 /**
  * Build the title used when persisting a new AI Journal session.
  *
@@ -53,7 +50,7 @@ export function buildJournalTitle(parsed: ParseResult, fallbackMessage: string):
 		const entries = parsed.result.entries;
 		const total = entries.reduce((sum, entry) => sum + entry.amount, 0);
 		const date = entries[0].date || '日付不明';
-		const body = `${date} ¥${formatJpy(total)} (${entries.length}件)`;
+		const body = `${date} ¥${formatJpyAmount(total)} (${entries.length}件)`;
 		return `${KEIRI_PREFIX}${truncate(body, MAX_BODY_CHARS)}`;
 	}
 	const body = truncate(fallbackMessage, MAX_BODY_CHARS) || 'untitled';

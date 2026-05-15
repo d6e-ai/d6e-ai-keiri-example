@@ -5,16 +5,11 @@
 // component filter / shape it with filterJournalSessions — that keeps
 // the [keiri] / #completed conventions in one place (src/lib/journal-title.ts).
 
-import { D6eClientError, listChatSessions, type ChatSessionRow } from '$lib/server/d6e-client';
+import type { TasksFetchResult } from '$lib/journal-task';
+import { D6eClientError, listChatSessions } from '$lib/server/d6e-client';
 import { getD6eWorkspaceId } from '$lib/server/env';
 
 import type { PageServerLoad } from './$types';
-
-export interface TasksFetchResult {
-	ok: boolean;
-	rows: ChatSessionRow[];
-	error?: string;
-}
 
 const CALLER_TAG = '/tasks/+page.server.ts (completed)';
 

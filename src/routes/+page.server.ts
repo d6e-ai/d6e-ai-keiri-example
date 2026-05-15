@@ -17,16 +17,11 @@
 // resolved value as { ok: false, error } and rendered as an inline
 // banner by the page component.
 
-import { D6eClientError, listChatSessions, type ChatSessionRow } from '$lib/server/d6e-client';
+import type { TasksFetchResult } from '$lib/journal-task';
+import { D6eClientError, listChatSessions } from '$lib/server/d6e-client';
 import { getD6eWorkspaceId } from '$lib/server/env';
 
 import type { PageServerLoad } from './$types';
-
-export interface TasksFetchResult {
-	ok: boolean;
-	rows: ChatSessionRow[];
-	error?: string;
-}
 
 const CALLER_TAG = '/+page.server.ts (pending)';
 
