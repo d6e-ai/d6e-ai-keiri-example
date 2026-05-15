@@ -6,6 +6,8 @@
 	// pattern as the AI Journal page. Clicking a card opens the same
 	// TaskDetailDialog so users can unmark completion or delete the row.
 
+	import { untrack } from 'svelte';
+
 	import AlertCircleIcon from '@lucide/svelte/icons/alert-circle';
 	import { invalidateAll } from '$app/navigation';
 
@@ -51,11 +53,16 @@
 		await invalidateAll();
 	}
 
+	// detailTask is read via untrack() to avoid a re-entrant effect loop:
+	// the .then() callback writes a fresh deriveJournalTaskSummary() object
+	// back to detailTask, and tracking it here would refire the effect.
 	$effect(() => {
-		if (!detailOpen || !detailTask) return;
+		if (!detailOpen) return;
+		if (!untrack(() => detailTask)) return;
 		completedResultPromise.then((result) => {
-			if (!result.ok || !detailTask) return;
-			const match = result.rows.find((row) => row.id === detailTask?.id);
+			const current = untrack(() => detailTask);
+			if (!result.ok || !current) return;
+			const match = result.rows.find((row) => row.id === current.id);
 			if (match) {
 				detailTask = deriveJournalTaskSummary(match);
 			}

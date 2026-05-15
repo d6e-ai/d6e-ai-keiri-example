@@ -23,6 +23,8 @@
 	// a card opens TaskDetailDialog so the user can mark it completed
 	// (moving it to /tasks) or delete it.
 
+	import { untrack } from 'svelte';
+
 	import AlertCircleIcon from '@lucide/svelte/icons/alert-circle';
 	import LoaderCircleIcon from '@lucide/svelte/icons/loader-circle';
 	import { invalidateAll } from '$app/navigation';
@@ -198,12 +200,16 @@
 
 	// Keep the open dialog in sync with the freshest server snapshot so
 	// the journal table inside it reflects any revise round-trip that
-	// happened while the dialog was open.
+	// happened while the dialog was open. detailTask is read via
+	// untrack() because the .then() callback writes a fresh object back
+	// to it; tracking would re-fire the effect and loop forever.
 	$effect(() => {
-		if (!detailOpen || !detailTask) return;
+		if (!detailOpen) return;
+		if (!untrack(() => detailTask)) return;
 		pendingResultPromise.then((result) => {
-			if (!result.ok || !detailTask) return;
-			const match = result.rows.find((row) => row.id === detailTask?.id);
+			const current = untrack(() => detailTask);
+			if (!result.ok || !current) return;
+			const match = result.rows.find((row) => row.id === current.id);
 			if (match) {
 				detailTask = deriveJournalTaskSummary(match);
 			}

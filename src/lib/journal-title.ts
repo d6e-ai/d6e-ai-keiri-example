@@ -76,10 +76,6 @@ export function isJournalTitle(title: string | null | undefined): boolean {
 	return typeof title === 'string' && title.startsWith(KEIRI_PREFIX);
 }
 
-export function isAskTitle(title: string | null | undefined): boolean {
-	return typeof title === 'string' && title.startsWith(ASK_PREFIX);
-}
-
 export function isCompletedTitle(title: string | null | undefined): boolean {
 	return typeof title === 'string' && title.endsWith(COMPLETED_SUFFIX);
 }
