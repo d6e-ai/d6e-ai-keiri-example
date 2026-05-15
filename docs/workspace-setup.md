@@ -114,9 +114,26 @@ custom guidance.)
 
 ### Multiple rules accumulating
 
-POST appends a new rule each time you run the script. If you see
-duplicate rules in the d6e admin UI, delete the older ones there;
-this script does not have a "replace" mode.
+The script is idempotent against re-runs with the **same** prompt
+content: before POSTing it lists the workspace's existing rules and
+hashes each one (SHA-256). If any of them already matches the prompt
+about to be uploaded, the script logs "identical rule already
+registered" and exits 0 without POSTing.
+
+A new rule is therefore only created when one of these is true:
+
+- The workspace has no rule with this exact content yet (first install).
+- You edited `scripts/prompts/ai-keiri-prompt.md`, so the hash no
+  longer matches the rule that was registered last time. In this case
+  the old rule keeps living at its previous `sortOrder` slot and you
+  probably want to delete it: either via the d6e admin UI, or with
+  `DELETE /api/workspace-prompt-rules/{ruleId}` using the same
+  cookie-based auth as POST.
+
+The check is content-based, so a rule that someone hand-edited inside
+the d6e admin UI will look different to the script and trigger a fresh
+POST. Treat the admin UI and `npm run init` as mutually exclusive
+editors for the same rule.
 
 ### LLM ignores the prompt
 
