@@ -156,3 +156,43 @@ export function totalJournalAmount(summary: JournalTaskSummary): number | null {
 	if (!summary.journal) return null;
 	return summary.journal.entries.reduce((sum, entry) => sum + entry.amount, 0);
 }
+
+/**
+ * Resolved shape consumed by the `{#await}` blocks on the AI Journal
+ * and Completed Tasks pages. Folding the fetch result + filter step
+ * into one shared helper keeps the two pages from drifting apart.
+ */
+export type FilteredTasksResult =
+	| { ok: true; tasks: JournalTaskSummary[] }
+	| { ok: false; tasks: JournalTaskSummary[]; error?: string };
+
+/**
+ * Apply the pending / completed filter to a TasksFetchResult and shape
+ * it for the `{#await}` consumer. Shared by both task-list pages so
+ * the filter contract stays in one place.
+ */
+export function toFilteredTasks(
+	result: TasksFetchResult,
+	options: FilterJournalSessionsOptions
+): FilteredTasksResult {
+	if (!result.ok) {
+		return { ok: false, tasks: [], error: result.error };
+	}
+	return { ok: true, tasks: filterJournalSessions(result.rows, options) };
+}
+
+/**
+ * Locate the freshest version of a previously-opened task summary
+ * inside a TasksFetchResult, re-deriving it from the matching row.
+ * Returns null when the row is gone (e.g. deleted in another tab) or
+ * the fetch itself failed. Shared by both task-list pages so the
+ * dialog-sync effect stays in lockstep.
+ */
+export function findFreshTaskSummary(
+	result: TasksFetchResult,
+	currentId: string
+): JournalTaskSummary | null {
+	if (!result.ok) return null;
+	const match = result.rows.find((row) => row.id === currentId);
+	return match ? deriveJournalTaskSummary(match) : null;
+}

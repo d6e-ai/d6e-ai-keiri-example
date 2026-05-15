@@ -35,8 +35,8 @@
 	import TaskCard from '$lib/components/task-card.svelte';
 	import TaskDetailDialog from '$lib/components/task-detail-dialog.svelte';
 	import {
-		deriveJournalTaskSummary,
-		filterJournalSessions,
+		findFreshTaskSummary,
+		toFilteredTasks,
 		type JournalTaskSummary
 	} from '$lib/journal-task';
 	import * as m from '$lib/paraglide/messages.js';
@@ -184,18 +184,7 @@
 	// banner) stays interactive even when d6e is slow.
 	const pendingResultPromise = $derived(data.pendingTasks$);
 	const pendingTasksPromise = $derived(
-		pendingResultPromise.then((result) =>
-			result.ok
-				? {
-						ok: true as const,
-						tasks: filterJournalSessions(result.rows, { completed: false })
-					}
-				: {
-						ok: false as const,
-						tasks: [] as JournalTaskSummary[],
-						error: result.error
-					}
-		)
+		pendingResultPromise.then((result) => toFilteredTasks(result, { completed: false }))
 	);
 
 	// Keep the open dialog in sync with the freshest server snapshot so
@@ -203,17 +192,25 @@
 	// happened while the dialog was open. detailTask is read via
 	// untrack() because the .then() callback writes a fresh object back
 	// to it; tracking would re-fire the effect and loop forever.
+	//
+	// The effect cleanup flips `cancelled` so a stale .then() callback
+	// from a previous run (e.g. after invalidateAll() swapped the
+	// promise) cannot overwrite detailTask with outdated data if it
+	// happens to resolve out of order.
 	$effect(() => {
 		if (!detailOpen) return;
 		if (!untrack(() => detailTask)) return;
+		let cancelled = false;
 		pendingResultPromise.then((result) => {
+			if (cancelled) return;
 			const current = untrack(() => detailTask);
-			if (!result.ok || !current) return;
-			const match = result.rows.find((row) => row.id === current.id);
-			if (match) {
-				detailTask = deriveJournalTaskSummary(match);
-			}
+			if (!current) return;
+			const updated = findFreshTaskSummary(result, current.id);
+			if (updated) detailTask = updated;
 		});
+		return () => {
+			cancelled = true;
+		};
 	});
 </script>
 

@@ -14,8 +14,8 @@
 	import TaskCard from '$lib/components/task-card.svelte';
 	import TaskDetailDialog from '$lib/components/task-detail-dialog.svelte';
 	import {
-		deriveJournalTaskSummary,
-		filterJournalSessions,
+		findFreshTaskSummary,
+		toFilteredTasks,
 		type JournalTaskSummary
 	} from '$lib/journal-task';
 	import * as m from '$lib/paraglide/messages.js';
@@ -30,18 +30,7 @@
 
 	const completedResultPromise = $derived(data.completedTasks$);
 	const completedTasksPromise = $derived(
-		completedResultPromise.then((result) =>
-			result.ok
-				? {
-						ok: true as const,
-						tasks: filterJournalSessions(result.rows, { completed: true })
-					}
-				: {
-						ok: false as const,
-						tasks: [] as JournalTaskSummary[],
-						error: result.error
-					}
-		)
+		completedResultPromise.then((result) => toFilteredTasks(result, { completed: true }))
 	);
 
 	function handleTaskClick(task: JournalTaskSummary): void {
@@ -56,17 +45,25 @@
 	// detailTask is read via untrack() to avoid a re-entrant effect loop:
 	// the .then() callback writes a fresh deriveJournalTaskSummary() object
 	// back to detailTask, and tracking it here would refire the effect.
+	//
+	// The effect cleanup flips `cancelled` so a stale .then() callback
+	// from a previous run (e.g. after invalidateAll() swapped the
+	// promise) cannot overwrite detailTask with outdated data if it
+	// happens to resolve out of order.
 	$effect(() => {
 		if (!detailOpen) return;
 		if (!untrack(() => detailTask)) return;
+		let cancelled = false;
 		completedResultPromise.then((result) => {
+			if (cancelled) return;
 			const current = untrack(() => detailTask);
-			if (!result.ok || !current) return;
-			const match = result.rows.find((row) => row.id === current.id);
-			if (match) {
-				detailTask = deriveJournalTaskSummary(match);
-			}
+			if (!current) return;
+			const updated = findFreshTaskSummary(result, current.id);
+			if (updated) detailTask = updated;
 		});
+		return () => {
+			cancelled = true;
+		};
 	});
 </script>
 
