@@ -74,23 +74,24 @@ npm install
 
 ### 2. Configure environment variables
 
-Copy `.env.example` to `.env` and fill in the seven values:
+Copy `.env.example` to `.env` and fill in the four values:
 
-| Variable                 | Used by                       | How to obtain                                                           |
-| ------------------------ | ----------------------------- | ----------------------------------------------------------------------- |
-| `D6E_API_URL`            | `/api/upload`                 | Base URL of the d6e Rust API (managed: same host as `D6E_FRONTEND_URL`) |
-| `D6E_FRONTEND_URL`       | `/api/intent`, `npm run init` | Base URL of the d6e SvelteKit frontend (e.g. `https://b-button.d6e.ai`) |
-| `D6E_WORKSPACE_ID`       | all calls                     | UUID of the d6e workspace this app should operate on                    |
-| `D6E_AUTH_URL`           | server-side token refresh     | Base URL of d6e-auth (`https://www.d6e.ai` for managed instances)       |
-| `D6E_AUTH_CLIENT_ID`     | server-side token refresh     | OAuth client ID issued by d6e-auth for your d6e instance                |
-| `D6E_AUTH_CLIENT_SECRET` | server-side token refresh     | OAuth client secret paired with the client ID                           |
-| `D6E_REFRESH_TOKEN`      | server-side token refresh     | Long-lived `auth-refresh` cookie value from a logged-in browser session |
+| Variable            | Used by                                                                        | How to obtain                                                           |
+| ------------------- | ------------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
+| `D6E_API_URL`       | `/api/upload`                                                                  | Base URL of the d6e Rust API (managed: same host as `D6E_FRONTEND_URL`) |
+| `D6E_FRONTEND_URL`  | `/api/intent`, `/api/chat-sessions`, `npm run init`, server-side token refresh | Base URL of the d6e SvelteKit frontend (e.g. `https://b-button.d6e.ai`) |
+| `D6E_WORKSPACE_ID`  | all calls                                                                      | UUID of the d6e workspace this app should operate on                    |
+| `D6E_REFRESH_TOKEN` | server-side token refresh                                                      | Long-lived `auth-refresh` cookie value from a logged-in browser session |
 
 > The `auth-refresh` cookie is `HttpOnly`, so you'll need to copy it
 > from the browser dev tools (`Application` -> `Cookies`) after logging
 > in to the d6e frontend. The cookie is valid for 30 days; this app
-> exchanges it for a fresh 1-hour access token via the d6e-auth OAuth
-> refresh flow so you never need to paste short-lived JWTs into `.env`.
+> exchanges it for a fresh 1-hour access token via
+> `${D6E_FRONTEND_URL}/api/v1/auth/token` (no `client_id` /
+> `client_secret` required) so you never need to paste short-lived
+> JWTs into `.env`. Refresh happens against the same `b-button` instance
+> that validates access tokens, which avoids audience-claim mismatch
+> errors that the central `d6e-auth` endpoint would otherwise produce.
 
 ### 3. Bootstrap the workspace (one-time)
 

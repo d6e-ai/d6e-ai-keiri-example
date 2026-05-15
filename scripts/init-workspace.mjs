@@ -5,17 +5,15 @@
 // Usage:
 //   D6E_FRONTEND_URL=... \
 //   D6E_WORKSPACE_ID=... \
-//   D6E_AUTH_URL=... \
-//   D6E_AUTH_CLIENT_ID=... \
-//   D6E_AUTH_CLIENT_SECRET=... \
 //   D6E_REFRESH_TOKEN=... \
 //   npm run init
 //
 // What it does:
-//   1. Exchanges D6E_REFRESH_TOKEN for a fresh access token via the
-//      d6e-auth token endpoint. This is the same OAuth refresh flow used
-//      by the runtime app, so init does not require a short-lived JWT
-//      to be pasted into .env.
+//   1. Exchanges D6E_REFRESH_TOKEN for a fresh access token via
+//      ${D6E_FRONTEND_URL}/api/v1/auth/token. This endpoint accepts the
+//      refresh token on its own (no client_id / client_secret needed)
+//      and issues a token whose audience matches the same b-button
+//      instance that verifyAccessToken will validate against.
 //   2. Reads scripts/prompts/ai-keiri-prompt.md (the single source of
 //      truth for this app's LLM behaviour).
 //   3. POSTs the content to
@@ -59,8 +57,8 @@ function trimTrailingSlashes(value) {
 	return value.replace(/\/+$/, '');
 }
 
-async function refreshAccessToken({ authUrl, clientId, clientSecret, refreshToken }) {
-	const target = `${authUrl}/api/v1/auth/token`;
+async function refreshAccessToken({ frontendUrl, refreshToken }) {
+	const target = `${frontendUrl}/api/v1/auth/token`;
 	let response;
 	try {
 		response = await fetch(target, {
@@ -68,9 +66,7 @@ async function refreshAccessToken({ authUrl, clientId, clientSecret, refreshToke
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				grant_type: 'refresh_token',
-				refresh_token: refreshToken,
-				client_id: clientId,
-				client_secret: clientSecret
+				refresh_token: refreshToken
 			})
 		});
 	} catch (err) {
@@ -80,7 +76,7 @@ async function refreshAccessToken({ authUrl, clientId, clientSecret, refreshToke
 	const text = await response.text();
 	if (!response.ok) {
 		fail(
-			`d6e-auth rejected refresh (status=${response.status}): ${text}\n` +
+			`${target} rejected refresh (status=${response.status}): ${text}\n` +
 				`Likely cause: D6E_REFRESH_TOKEN was rotated in another session — ` +
 				`re-copy the auth-refresh cookie value from your browser dev tools.`
 		);
@@ -90,20 +86,17 @@ async function refreshAccessToken({ authUrl, clientId, clientSecret, refreshToke
 	try {
 		parsed = JSON.parse(text);
 	} catch {
-		fail(`d6e-auth returned non-JSON body: ${text}`);
+		fail(`${target} returned non-JSON body: ${text}`);
 	}
 
 	if (!parsed.access_token) {
-		fail(`d6e-auth response missing access_token: ${text}`);
+		fail(`${target} response missing access_token: ${text}`);
 	}
 	return parsed.access_token;
 }
 
 const frontendUrl = trimTrailingSlashes(readEnv('D6E_FRONTEND_URL'));
 const workspaceId = readEnv('D6E_WORKSPACE_ID');
-const authUrl = trimTrailingSlashes(readEnv('D6E_AUTH_URL'));
-const clientId = readEnv('D6E_AUTH_CLIENT_ID');
-const clientSecret = readEnv('D6E_AUTH_CLIENT_SECRET');
 const refreshToken = readEnv('D6E_REFRESH_TOKEN');
 
 if (!UUID_RE.test(workspaceId)) {
@@ -127,11 +120,9 @@ if (Array.from(promptBody).length > MAX_PROMPT_CHARS) {
 	);
 }
 
-console.log(`[init-workspace] refreshing access token via ${authUrl}/api/v1/auth/token`);
+console.log(`[init-workspace] refreshing access token via ${frontendUrl}/api/v1/auth/token`);
 const accessToken = await refreshAccessToken({
-	authUrl,
-	clientId,
-	clientSecret,
+	frontendUrl,
 	refreshToken
 });
 
