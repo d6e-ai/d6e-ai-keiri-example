@@ -38,7 +38,6 @@
 	let isLoading = $state(false);
 	let errorMessage = $state<string | null>(null);
 	let currentFileRef = $state<UploadedFileRef | null>(null);
-	let lastRawMessage = $state<string | null>(null);
 	let parseResult = $state<ParseResult | null>(null);
 
 	async function uploadReceipt(file: File): Promise<UploadedFileRef> {
@@ -80,12 +79,10 @@
 		errorMessage = null;
 		isLoading = true;
 		parseResult = null;
-		lastRawMessage = null;
 		try {
 			const ref = await uploadReceipt(file);
 			currentFileRef = ref;
 			const { rawMessage } = await callIntent(CREATE_PROMPT, ref);
-			lastRawMessage = rawMessage;
 			parseResult = parseJournalMessage(rawMessage);
 		} catch (err) {
 			const detail = err instanceof Error ? err.message : String(err);
@@ -117,7 +114,6 @@
 			].join('\n');
 
 			const { rawMessage } = await callIntent(message, currentFileRef);
-			lastRawMessage = rawMessage;
 			parseResult = parseJournalMessage(rawMessage);
 		} catch (err) {
 			const detail = err instanceof Error ? err.message : String(err);

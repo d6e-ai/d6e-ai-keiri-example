@@ -31,7 +31,10 @@ export const JournalEntrySchema = z.object({
 export const JournalResultSchema = z.object({
 	kind: z.literal('journal'),
 	entries: z.array(JournalEntrySchema).min(1),
-	warnings: z.array(z.string()).default([])
+	warnings: z
+		.array(z.string())
+		.nullish()
+		.transform((val) => val ?? [])
 });
 
 export type JournalEntry = z.infer<typeof JournalEntrySchema>;
