@@ -59,8 +59,12 @@
 >
 	<div class="flex items-center gap-2 text-xs">
 		{#if task.isCompleted}
+			<!-- text-success on bg-success/10 mirrors the pending pill below.
+			     Using text-success-foreground here ended up invisible because
+			     that token is meant for high-contrast on solid bg-success, not
+			     on the 10% tint we actually use. -->
 			<span
-				class="inline-flex items-center gap-1 rounded-full bg-success/15 px-2.5 py-0.5 font-medium text-success-foreground"
+				class="inline-flex items-center gap-1 rounded-full bg-success/10 px-2.5 py-0.5 font-medium text-success"
 			>
 				<CheckCircle2Icon class="size-3.5" aria-hidden="true" />
 				{m.task_card_status_completed()}

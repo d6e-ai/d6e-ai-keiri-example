@@ -219,9 +219,6 @@
 
 <div class="space-y-8 p-6 lg:p-10">
 	<section class="space-y-2">
-		<p class="text-xs font-semibold tracking-wider text-primary uppercase">
-			Google Workspace inspired
-		</p>
 		<h1 class="text-3xl font-bold tracking-tight text-foreground">{m.journal_title()}</h1>
 		<p class="text-sm text-muted-foreground">{m.journal_description()}</p>
 	</section>
