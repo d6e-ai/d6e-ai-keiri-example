@@ -66,15 +66,19 @@ export function parseJournalMessage(message: string): ParseResult {
 		};
 	}
 
+	let sawValidJson = false;
+	let lastJsonParseError = '';
 	for (const block of blocks) {
 		let json: unknown;
 		try {
 			json = JSON.parse(block);
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err);
+			lastJsonParseError = msg;
 			console.warn(`[parse-journal] JSON.parse failed: ${msg}`);
 			continue;
 		}
+		sawValidJson = true;
 
 		const parsed = JournalResultSchema.safeParse(json);
 		if (parsed.success) {
@@ -85,6 +89,15 @@ export function parseJournalMessage(message: string): ParseResult {
 				.map((issue) => `${issue.path.join('.')}: ${issue.message}`)
 				.join('; ')}`
 		);
+	}
+
+	if (!sawValidJson) {
+		return {
+			kind: 'fallback',
+			reason: 'invalid_json',
+			detail: `A fenced code block was present but could not be parsed as JSON: ${lastJsonParseError}`,
+			rawText: message
+		};
 	}
 
 	return {

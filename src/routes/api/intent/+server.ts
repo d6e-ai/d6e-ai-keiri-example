@@ -74,7 +74,7 @@ export const POST: RequestHandler = async ({ request }) => {
 		return json(upstream);
 	} catch (err) {
 		if (err instanceof D6eClientError) {
-			return json({ error: err.message, upstreamBody: err.upstreamBody }, { status: err.status });
+			return json({ error: err.message }, { status: err.status });
 		}
 		const msg = err instanceof Error ? err.message : String(err);
 		console.error(`[${callerTag}] Unexpected error: ${msg}`);
