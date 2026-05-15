@@ -1,17 +1,31 @@
-// POST /api/intent - server-side proxy that forwards a natural-language
+// POST /api/intent — server-side proxy that forwards a natural-language
 // task to d6e's /api/workflows/execute-by-intent endpoint.
 //
 // The workspace id is injected from environment variables, so the client
-// never has to know it. Input file references uploaded via /api/upload
-// can be passed through unchanged.
+// never has to know it. File references uploaded via /api/upload are passed
+// through unchanged.
 //
-// The response shape is the raw IntentResponse from upstream; the AI
-// journal page is responsible for running it through parse-journal to
-// turn the assistant message into structured data when applicable.
+// Failure semantics:
+//   - 504: upstream timed out (the workflow may still be running on d6e).
+//   - 499: the browser navigated away / aborted the fetch.
+//   - other 4xx/5xx: bubbled up from d6e's response.
+//
+// Cleanup policy:
+//   When execute-by-intent fails with a *hard* error (non-success, not a
+//   timeout and not an abort) and the request carried inputFileRefs, we
+//   best-effort DELETE those storage records so the workspace does not
+//   accumulate orphaned uploads. Timeouts deliberately leave the files in
+//   place because the workflow may still be running and consuming them
+//   (mirrors d6e-auth's SNS proxy behaviour).
 
 import { json } from '@sveltejs/kit';
 
-import { D6eClientError, executeByIntent, type IntentInputFileRef } from '$lib/server/d6e-client';
+import {
+	D6eClientError,
+	deleteFile,
+	executeByIntent,
+	type IntentInputFileRef
+} from '$lib/server/d6e-client';
 
 import type { RequestHandler } from './$types';
 
@@ -47,6 +61,12 @@ function validateInputFileRefs(value: unknown): IntentInputFileRef[] | string {
 	return refs;
 }
 
+async function bestEffortCleanup(callerTag: string, refs: IntentInputFileRef[]): Promise<void> {
+	for (const ref of refs) {
+		await deleteFile(callerTag, ref.fileId);
+	}
+}
+
 export const POST: RequestHandler = async ({ request }) => {
 	const callerTag = '/api/intent';
 
@@ -65,19 +85,41 @@ export const POST: RequestHandler = async ({ request }) => {
 	if (typeof refsOrError === 'string') {
 		return json({ error: refsOrError }, { status: 400 });
 	}
+	const inputFileRefs = refsOrError;
 
 	try {
-		const upstream = await executeByIntent(callerTag, {
-			message: body.message,
-			inputFileRefs: refsOrError
-		});
+		const upstream = await executeByIntent(
+			callerTag,
+			{ message: body.message, inputFileRefs },
+			{ signal: request.signal }
+		);
 		return json(upstream);
 	} catch (err) {
 		if (err instanceof D6eClientError) {
-			return json({ error: err.message }, { status: err.status });
+			// Hard failure (not a timeout, not an abort) — orphaned uploads
+			// should be released. Timeouts intentionally skip cleanup because
+			// the workflow may still be running on the d6e side.
+			if (!err.timedOut && !err.aborted && inputFileRefs.length > 0) {
+				await bestEffortCleanup(callerTag, inputFileRefs);
+			}
+			// NOTE: err.upstreamBody is intentionally NOT echoed back to the
+			// browser. It can contain internal d6e response bodies that the
+			// browser has no business seeing (see commit dbe6747). Server-side
+			// logs in d6e-client.ts already record it for diagnostics.
+			return json(
+				{
+					error: err.message,
+					timedOut: err.timedOut || undefined,
+					aborted: err.aborted || undefined
+				},
+				{ status: err.status }
+			);
 		}
 		const msg = err instanceof Error ? err.message : String(err);
 		console.error(`[${callerTag}] Unexpected error: ${msg}`);
+		if (inputFileRefs.length > 0) {
+			await bestEffortCleanup(callerTag, inputFileRefs);
+		}
 		return json({ error: msg }, { status: 500 });
 	}
 };

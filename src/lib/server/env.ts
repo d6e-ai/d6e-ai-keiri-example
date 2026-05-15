@@ -23,12 +23,21 @@ function requireEnv(name: string, caller: string): string {
 	return value;
 }
 
-export function getD6eApiUrl(caller: string): string {
-	return requireEnv('D6E_API_URL', caller).replace(/\/+$/, '');
-}
-
 export function getD6eFrontendUrl(caller: string): string {
 	return requireEnv('D6E_FRONTEND_URL', caller).replace(/\/+$/, '');
+}
+
+// On managed deployments (e.g. https://b-button.d6e.ai) the Rust API and the
+// SvelteKit frontend share a single origin, so D6E_API_URL can be omitted and
+// we fall back to D6E_FRONTEND_URL. Set D6E_API_URL explicitly only when the
+// Rust API is reachable on a different host (e.g. a separated local dev
+// setup where the API runs on http://localhost:8000).
+export function getD6eApiUrl(caller: string): string {
+	const explicit = env.D6E_API_URL;
+	if (explicit && explicit.length > 0) {
+		return explicit.replace(/\/+$/, '');
+	}
+	return getD6eFrontendUrl(caller);
 }
 
 export function getD6eJwt(caller: string): string {

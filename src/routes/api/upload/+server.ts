@@ -1,13 +1,13 @@
-// POST /api/upload - server-side proxy that uploads a single receipt image
-// to d6e's Storage API and returns the resulting file reference.
+// POST /api/upload — server-side proxy that uploads a single receipt image
+// to d6e's Storage API via multipart/form-data and returns the file
+// reference shape that execute-by-intent expects in inputFileRefs[].
 //
-// The client should POST a multipart/form-data body with a single "file"
-// field. We re-encode the binary as base64 and call d6e's JSON-only
-// /api/v1/workspaces/{wsId}/files endpoint via lib/server/d6e-client.
+// The browser POSTs multipart/form-data with one "file" field. The buffer
+// is forwarded to d6e's /api/v1/workspaces/{wsId}/files/multipart endpoint
+// without base64 expansion (saves ~33% bandwidth vs. JSON+base64 upload).
 //
-// The response payload mirrors the shape that execute-by-intent expects
-// in its inputFileRefs[] argument so the caller can immediately forward
-// it on without any field renaming.
+// The response intentionally mirrors IntentInputFileRef so the caller can
+// pass it through to /api/intent verbatim.
 
 import { json } from '@sveltejs/kit';
 
@@ -15,7 +15,7 @@ import { D6eClientError, uploadFile } from '$lib/server/d6e-client';
 
 import type { RequestHandler } from './$types';
 
-const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10 MiB - matches d6e default
+const MAX_FILE_BYTES = 10 * 1024 * 1024;
 
 export const POST: RequestHandler = async ({ request }) => {
 	const callerTag = '/api/upload';
@@ -46,7 +46,6 @@ export const POST: RequestHandler = async ({ request }) => {
 	}
 
 	const buffer = Buffer.from(await file.arrayBuffer());
-	const contentBase64 = buffer.toString('base64');
 	const filename = file.name || 'receipt';
 	const contentType = file.type || 'application/octet-stream';
 
@@ -54,13 +53,14 @@ export const POST: RequestHandler = async ({ request }) => {
 		const uploaded = await uploadFile(callerTag, {
 			filename,
 			contentType,
-			contentBase64
+			content: buffer,
+			signal: request.signal
 		});
 		return json({
 			fileId: uploaded.id,
 			filename: uploaded.filename,
-			mimeType: contentType,
-			sizeBytes: file.size
+			mimeType: uploaded.contentType,
+			sizeBytes: uploaded.sizeBytes
 		});
 	} catch (err) {
 		if (err instanceof D6eClientError) {
