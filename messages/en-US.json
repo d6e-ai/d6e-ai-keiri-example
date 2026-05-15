@@ -21,6 +21,7 @@
 	"journal_status_drive_unregistered": "Not in Drive",
 	"journal_status_pending_approval": "Pending Approval",
 	"journal_status_revising": "Revising",
+	"journal_status_completed": "Completed",
 	"journal_loading": "AI is generating the journal entries...",
 	"journal_error_title": "Failed to generate journal entries",
 	"journal_parse_warning": "The AI response could not be parsed as structured data. Showing the raw text below.",

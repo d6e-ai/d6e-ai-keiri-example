@@ -21,6 +21,7 @@
 	"journal_status_drive_unregistered": "Drive 未登録",
 	"journal_status_pending_approval": "承認待ち",
 	"journal_status_revising": "修正確認中",
+	"journal_status_completed": "完了",
 	"journal_loading": "AI が仕訳を生成しています...",
 	"journal_error_title": "仕訳の生成に失敗しました",
 	"journal_parse_warning": "AI 応答を構造化データとして解釈できませんでした。原文を以下に表示します。",

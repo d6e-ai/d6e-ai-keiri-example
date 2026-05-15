@@ -19,7 +19,7 @@
 			case 'revising':
 				return m.journal_status_revising();
 			case 'completed':
-				return 'Completed';
+				return m.journal_status_completed();
 		}
 	}
 
