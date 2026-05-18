@@ -63,7 +63,11 @@ function decodeStateCookieValue(raw: string | undefined): StateCookiePayload | n
 		const json = Buffer.from(raw, 'base64').toString('utf8');
 		const parsed = JSON.parse(json) as Partial<StateCookiePayload>;
 		if (typeof parsed.state !== 'string' || typeof parsed.returnTo !== 'string') return null;
-		if (!parsed.returnTo.startsWith('/') || parsed.returnTo.startsWith('//')) {
+		if (
+			!parsed.returnTo.startsWith('/') ||
+			parsed.returnTo.startsWith('//') ||
+			parsed.returnTo.startsWith('/\\')
+		) {
 			return { state: parsed.state, returnTo: '/' };
 		}
 		return { state: parsed.state, returnTo: parsed.returnTo };
