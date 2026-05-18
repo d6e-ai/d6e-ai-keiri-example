@@ -161,7 +161,27 @@
 		const restored = data.restoredSession;
 		const restoredId = restored?.id ?? null;
 		const currentId = untrack(() => currentChatSessionId);
-		if (restoredId === currentId) return;
+
+		if (restoredId === currentId) {
+			// Same session id as the client already holds. This happens
+			// after handleExecute/handleRevise/handleRegister set
+			// currentChatSessionId optimistically and then call
+			// invalidateAll(): the loader returns the freshly-persisted
+			// row with the same id we already stored. Skip the full
+			// re-hydration (it would clobber parseResult / uploadedRefs
+			// that the handler just populated), but still sync the
+			// server-only fields (title, completion flag) so canComplete
+			// can flip true and the "完了にする" button becomes enabled.
+			if (restored) {
+				if (untrack(() => currentTitle) !== restored.title) {
+					currentTitle = restored.title;
+				}
+				if (untrack(() => isCurrentCompleted) !== restored.isCompleted) {
+					isCurrentCompleted = restored.isCompleted;
+				}
+			}
+			return;
+		}
 
 		if (restored) {
 			currentChatSessionId = restored.id;
