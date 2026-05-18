@@ -72,12 +72,21 @@ export const RegistrationDriveUploadSchema = z.object({
 	// The Drive API normally returns webViewLink as an https URL but it is
 	// optional in the API response, and the LLM may omit it (or leave the
 	// key out entirely) when the fields= mask was not specified. Accept
-	// both null and undefined, normalise to null, and reject non-URL strings.
+	// null, undefined, and any string; normalise empty / malformed URLs to
+	// null so a bad value does not reject the entire registration payload
+	// (the UI renders "Link unavailable" for null).
 	web_view_link: z
 		.string()
-		.url()
 		.nullish()
-		.transform((val) => val ?? null)
+		.transform((val) => {
+			if (!val) return null;
+			try {
+				new URL(val);
+				return val;
+			} catch {
+				return null;
+			}
+		})
 });
 
 export const RegistrationDriveBlockSchema = z.object({
