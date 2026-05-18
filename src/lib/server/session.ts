@@ -57,6 +57,29 @@ const ACCESS_COOKIE_FALLBACK_MAX_AGE_S = 60 * 60;
 // OAuth detour.
 const OAUTH_STATE_COOKIE_MAX_AGE_S = 60 * 10;
 
+// Module-level deduplication of concurrent refresh attempts, keyed by
+// refresh token value. d6e-auth rotates the refresh token on every
+// use, so parallel requests carrying the same auth-refresh cookie
+// (e.g. a multi-file upload firing several /api/upload calls while
+// the access token sits in its grace window) would otherwise race:
+// only one POST to /api/v1/auth/token would succeed and the rest
+// would fail, calling clearSession() and emitting cookie-delete
+// Set-Cookie headers that can clobber the successful sibling's
+// fresh-token headers and log the user out. Sharing a single
+// in-flight Promise means every concurrent caller receives the same
+// OauthTokens and writes identical cookies to their own response.
+const inflightRefreshes = new Map<string, Promise<OauthTokens>>();
+
+function refreshAccessTokenDeduped(caller: string, refreshToken: string): Promise<OauthTokens> {
+	const existing = inflightRefreshes.get(refreshToken);
+	if (existing) return existing;
+	const promise = refreshAccessToken(caller, refreshToken).finally(() => {
+		inflightRefreshes.delete(refreshToken);
+	});
+	inflightRefreshes.set(refreshToken, promise);
+	return promise;
+}
+
 export interface SessionUser {
 	id: string;
 	email: string;
@@ -193,7 +216,7 @@ export async function loadSession(event: RequestEvent): Promise<Session | null> 
 
 	let refreshed: OauthTokens;
 	try {
-		refreshed = await refreshAccessToken('session.loadSession', refreshToken);
+		refreshed = await refreshAccessTokenDeduped('session.loadSession', refreshToken);
 	} catch (err) {
 		const msg =
 			err instanceof OauthError ? err.message : err instanceof Error ? err.message : String(err);
