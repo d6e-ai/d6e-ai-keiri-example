@@ -30,11 +30,18 @@ overwritten the next time someone re-runs the script.
 
 `npm run init` reads `.env` automatically via Node's `--env-file` flag.
 
-| Variable            | Where to find it                                                                      |
-| ------------------- | ------------------------------------------------------------------------------------- |
-| `D6E_BASE_URL`      | Base URL of the d6e instance (e.g. `https://b-button.d6e.ai`)                         |
-| `D6E_WORKSPACE_ID`  | UUID of the target workspace (visible in the d6e frontend URL when you're inside one) |
-| `D6E_REFRESH_TOKEN` | Value of the `auth-refresh` cookie for a logged-in d6e admin session                  |
+| Variable                 | Where to find it                                                                                |
+| ------------------------ | ----------------------------------------------------------------------------------------------- |
+| `D6E_BASE_URL`           | Base URL of the d6e instance (e.g. `https://b-button.d6e.ai`)                                   |
+| `D6E_WORKSPACE_ID`       | UUID of the target workspace (visible in the d6e frontend URL when you're inside one)           |
+| `D6E_INIT_REFRESH_TOKEN` | Value of the `auth-refresh` cookie for a logged-in workspace-ADMIN session on `D6E_BASE_URL`    |
+
+`D6E_INIT_REFRESH_TOKEN` is intentionally separate from the regular
+`auth-refresh` cookie this app issues to end users. The script can
+only POST to `/api/workspace-prompt-rules` if the underlying account
+has admin role on the target workspace, so this variable should hold
+a token from an explicitly admin browser session — typically yours
+during setup.
 
 ## Why a cookie value (not a Bearer token)?
 
@@ -52,7 +59,7 @@ and stamps it into the `auth-token` cookie when calling this endpoint.
 
 ## How to obtain the refresh token
 
-### `D6E_REFRESH_TOKEN`
+### `D6E_INIT_REFRESH_TOKEN`
 
 1. Open the d6e frontend (`D6E_BASE_URL`) in your browser and log
    in with an account that has admin role on the target workspace.
@@ -60,13 +67,14 @@ and stamps it into the `auth-token` cookie when calling this endpoint.
 3. Select the `D6E_BASE_URL` host.
 4. Copy the value of the `auth-refresh` cookie. It is much longer-lived
    (30 days) than `auth-token`.
-5. Paste it into `.env` as `D6E_REFRESH_TOKEN=<value>`.
+5. Paste it into `.env` as `D6E_INIT_REFRESH_TOKEN=<value>`.
 
 The cookie is `HttpOnly`, so this manual copy is unavoidable for the
-initial setup. After that the app refreshes access tokens automatically
-via `${D6E_BASE_URL}/api/v1/auth/token`. No `D6E_AUTH_CLIENT_ID` /
-`D6E_AUTH_CLIENT_SECRET` are needed because the `b-button` instance
-already knows which OAuth client backs it.
+initial setup. The bootstrap script refreshes the access token by
+posting `{ grant_type: "refresh_token", refresh_token: ... }` to
+`${D6E_BASE_URL}/api/v1/auth/token` (no client credentials needed
+against the b-button instance) and stamps the issued JWT into the
+`auth-token` cookie when calling `/api/workspace-prompt-rules`.
 
 ## Running the script
 
@@ -88,10 +96,10 @@ Successful output:
 
 ### `rejected refresh (status=4xx)`
 
-`D6E_REFRESH_TOKEN` is invalid. The most common cause is that the d6e
-frontend silently rotated the cookie while you were logged in. Re-login
-to the d6e frontend, copy the latest `auth-refresh` cookie value, and
-update `.env`.
+`D6E_INIT_REFRESH_TOKEN` is invalid. The most common cause is that the
+d6e frontend silently rotated the cookie while you were logged in.
+Re-login to the d6e frontend, copy the latest `auth-refresh` cookie
+value, and update `.env`.
 
 ### `401 Unauthorized` from `/api/workspace-prompt-rules`
 

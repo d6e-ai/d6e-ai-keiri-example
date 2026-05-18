@@ -27,6 +27,7 @@ import {
 	type ChatSessionMessage
 } from '$lib/server/d6e-client';
 import { getD6eWorkspaceId } from '$lib/server/env';
+import { requireAccessToken } from '$lib/server/session';
 
 import type { RequestHandler } from './$types';
 
@@ -65,10 +66,11 @@ function validateCreateBody(
 	return { title, messages };
 }
 
-export const GET: RequestHandler = async () => {
+export const GET: RequestHandler = async (event) => {
+	const accessToken = requireAccessToken(event, CALLER_TAG);
 	const workspaceId = getD6eWorkspaceId(CALLER_TAG);
 	try {
-		const sessions = await listChatSessions(CALLER_TAG, workspaceId);
+		const sessions = await listChatSessions(CALLER_TAG, accessToken, workspaceId);
 		return json(sessions);
 	} catch (err) {
 		if (err instanceof D6eClientError) {
@@ -90,10 +92,12 @@ export const GET: RequestHandler = async () => {
 	}
 };
 
-export const POST: RequestHandler = async ({ request }) => {
+export const POST: RequestHandler = async (event) => {
+	const accessToken = requireAccessToken(event, CALLER_TAG);
+
 	let raw: CreateChatSessionRequestBody;
 	try {
-		raw = (await request.json()) as CreateChatSessionRequestBody;
+		raw = (await event.request.json()) as CreateChatSessionRequestBody;
 	} catch {
 		return json({ error: 'Request body must be valid JSON' }, { status: 400 });
 	}
@@ -105,7 +109,7 @@ export const POST: RequestHandler = async ({ request }) => {
 
 	const workspaceId = getD6eWorkspaceId(CALLER_TAG);
 	try {
-		const row = await createChatSession(CALLER_TAG, {
+		const row = await createChatSession(CALLER_TAG, accessToken, {
 			workspaceId,
 			title: parsed.title,
 			messages: parsed.messages

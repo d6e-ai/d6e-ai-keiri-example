@@ -65,24 +65,40 @@ docs/
 
 ## Environment variables
 
-See `.env.example`. The runtime never reads a short-lived access token
-directly — it stores a long-lived refresh token (`D6E_REFRESH_TOKEN`)
-and exchanges it for an access token by POSTing to
-`${D6E_BASE_URL}/api/v1/auth/token` whenever a request needs one
-(`src/lib/server/d6e-token.ts`). The same module is reused by
-`scripts/init-workspace.mjs`, which stamps the freshly-issued access
-token into the `Cookie: auth-token=...` header required by
-`/api/workspace-prompt-rules`.
+See `.env.example`. The app implements a full OAuth2 Authorization
+Code flow against `D6E_AUTH_URL` (e.g. `https://www.d6e.ai`). Each end
+user signs in with their own account and the resulting JWT pair lives
+in HTTP-only cookies; the runtime never stores a long-lived token in
+env vars.
 
-No `D6E_AUTH_CLIENT_ID` / `D6E_AUTH_CLIENT_SECRET` are needed: the
-`b-button` instance already knows which OAuth client backs it, and
-issues tokens whose `aud` claim matches the same instance that
-validates them.
+Required env vars:
+
+- `D6E_BASE_URL`, `D6E_WORKSPACE_ID` — the d6e b-button instance and
+  workspace this app targets.
+- `D6E_AUTH_URL`, `D6E_AUTH_CLIENT_ID`, `D6E_AUTH_CLIENT_SECRET`,
+  `D6E_AUTH_REDIRECT_URI` — d6e-auth client credentials. The
+  `registered_client.redirectUris` array on d6e-auth must include
+  `D6E_AUTH_REDIRECT_URI` exactly before logins work.
+- `D6E_INIT_REFRESH_TOKEN` — admin-only refresh token used **only** by
+  `scripts/init-workspace.mjs` to POST the workspace prompt rule.
+  Separate from the end-user `auth-refresh` cookie.
+
+Per-request token flow:
+
+1. `src/hooks.server.ts` reads the `auth-access` cookie and exposes
+   it as `event.locals.accessToken`.
+2. `src/lib/server/session.ts` checks the JWT `exp` and transparently
+   refreshes via `${D6E_AUTH_URL}/api/v1/auth/token` when within 60s
+   of expiry.
+3. All d6e API helpers in `src/lib/server/d6e-client.ts` accept the
+   access token as an explicit argument; route handlers pass
+   `event.locals.accessToken` (via `requireAccessToken()` for type
+   narrowing).
 
 The Bearer headers used by `/api/workflows/execute-by-intent` and
-`/api/v1/workspaces/{id}/files` and the `Cookie: auth-token=...` value
-used by `/api/workspace-prompt-rules` and `/api/chat-sessions` all
-carry the same access token; only the header name differs.
+`/api/v1/workspaces/{id}/files/multipart` and the `Cookie: auth-token=...`
+value used by `/api/workspace-prompt-rules` and `/api/chat-sessions`
+all carry the same JWT; only the header name differs.
 
 ## LLM output contract
 

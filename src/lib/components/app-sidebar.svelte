@@ -1,11 +1,25 @@
 <script lang="ts">
-	// Left navigation rail used by the root layout. Pure Svelte 5 + Tailwind,
-	// no shadcn-svelte sidebar primitive so the component stays easy to
-	// modify later. The current route is highlighted via the `page` store
-	// so that highlight state stays in sync with browser back/forward
-	// navigation.
+	// Left navigation rail used by the root layout.
+	//
+	// Purpose:
+	//   Pure Svelte 5 + Tailwind primary navigation. The current route
+	//   is highlighted via $app/state.page so that the highlight stays
+	//   in sync with browser back/forward navigation. The signed-in
+	//   user (page.data.user, surfaced by /+layout.server.ts) is shown
+	//   at the bottom along with a logout form.
+	//
+	// Main specifications:
+	//   - Logout is a POST form to /auth/logout so browsers do not
+	//     prefetch it on hover (GET-based logout buttons are a common
+	//     foot-gun) and so the action is treated as a real intent.
 
-	import { CheckSquareIcon, HelpCircleIcon, SparklesIcon } from '@lucide/svelte';
+	import {
+		CheckSquareIcon,
+		HelpCircleIcon,
+		LogOutIcon,
+		SparklesIcon,
+		UserIcon
+	} from '@lucide/svelte';
 	import { page } from '$app/state';
 
 	import * as m from '$lib/paraglide/messages.js';
@@ -34,6 +48,8 @@
 		if (key === 'nav_tasks') return m.nav_tasks();
 		return m.nav_ask();
 	}
+
+	const user = $derived(page.data.user);
 </script>
 
 <aside
@@ -69,4 +85,28 @@
 			</a>
 		{/each}
 	</nav>
+
+	{#if user}
+		<div class="mt-auto space-y-3 border-t border-sidebar-border pt-4">
+			<div class="space-y-1">
+				<div class="flex items-center gap-2 text-xs text-muted-foreground">
+					<UserIcon class="size-3.5" aria-hidden="true" />
+					<span>{m.auth_user_label()}</span>
+				</div>
+				<div class="truncate text-sm font-medium" title={user.email}>{user.name || user.email}</div>
+				{#if user.name && user.name !== user.email}
+					<div class="truncate text-xs text-muted-foreground" title={user.email}>{user.email}</div>
+				{/if}
+			</div>
+			<form method="POST" action="/auth/logout">
+				<button
+					type="submit"
+					class="inline-flex w-full items-center justify-center gap-2 rounded-md border border-sidebar-border bg-sidebar px-3 py-2 text-sm font-medium text-sidebar-foreground transition-colors hover:bg-sidebar-accent/60"
+				>
+					<LogOutIcon class="size-4" aria-hidden="true" />
+					<span>{m.auth_logout()}</span>
+				</button>
+			</form>
+		</div>
+	{/if}
 </aside>

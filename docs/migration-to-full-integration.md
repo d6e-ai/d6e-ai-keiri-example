@@ -4,48 +4,35 @@ This document is the roadmap for turning the example app into a real
 multi-user AI accounting product. Nothing here is implemented yet — it
 is intended as a starting point for whoever picks up maintenance.
 
-The current example ("B-case") deliberately keeps integration thin:
+The current example ("B-case") integrates one workspace with d6e-auth
+through a proper OAuth2 Authorization Code flow:
 
-- One shared workspace, one shared OAuth client + refresh token in
-  `.env`. Access tokens are minted on the server via the d6e-auth
-  refresh flow (no short-lived JWTs stored in `.env`).
-- Manual bootstrap via `npm run init`.
+- Each user signs in with their own d6e-auth account. JWT pairs are
+  stored in HTTP-only cookies; the SvelteKit hook auto-refreshes them.
+- A workspace allow-list (`D6E_WORKSPACE_ID`) is enforced at
+  `/auth/callback` via the d6e workspace membership probe.
+- Manual bootstrap via `npm run init` is still required once per
+  workspace to register the LLM prompt rule.
 - LLM behaviour shaped only through a workspace prompt rule.
-- Receipt files uploaded ad-hoc, never persisted in this app's own DB.
+- Receipt files uploaded ad-hoc; deletable from the queue but never
+  persisted in this app's own DB.
 
-The full integration ("C-case") replaces each of these with a proper
-production-grade equivalent. Phases below are ordered so you can ship
-incrementally.
+The full integration ("C-case") replaces the still-thin parts with a
+proper production-grade equivalent. Phases below are ordered so you can
+ship incrementally.
 
-## Phase 1 — Per-user authentication
+## Phase 1 — Multi-workspace authentication ✅ partially shipped
 
-**Goal:** every user signs in with their own d6e-auth account instead of
-sharing one refresh token.
+**Status:** per-user OAuth login is now part of the B-case (see
+`src/routes/auth/*` and `src/hooks.server.ts`). What is still B-case-y:
 
-The B-case already implements the OAuth refresh half of the puzzle —
-the application has a registered OAuth client and the runtime mints
-fresh access tokens via `src/lib/server/d6e-token.ts`. What's still
-shared in the B-case is the **identity** behind that refresh token
-(one user, one workspace). Phase 1 is about per-user identity:
-
-- Add a `+hooks.server.ts` that validates the d6e-auth `auth-token`
-  cookie on every request (mirrors what the d6e frontend does in
-  [`packages/frontend/src/lib/server/auth.ts`](https://github.com/d6e-ai/d6e/blob/main/packages/frontend/src/lib/server/auth.ts)).
-- Add a `/login` route that kicks off d6e-auth's `authorization_code`
-  flow (will need a real `client_id` / `client_secret` registered with
-  d6e-auth — they are not used by the B-case refresh flow) and a
-  `/auth/callback` route that exchanges the code for per-user
-  `auth-token` and `auth-refresh` cookies.
-- In `src/lib/server/d6e-client.ts`, take the Bearer token from
-  `event.cookies.get('auth-token')` instead of the shared
-  `getAccessToken()`.
-- Move the auto-refresh logic in `d6e-token.ts` to the request hook so
-  each user's refresh token rotates independently.
-- Delete `D6E_REFRESH_TOKEN` from `.env.example`.
-
-Out of scope for Phase 1: refresh token persistence across deploys.
-For now, an in-memory map keyed by user id is sufficient (we already
-rely on this for the singleton-user B-case).
+- A single `D6E_WORKSPACE_ID` is hard-coded in `.env`; users outside
+  that workspace are bounced to `/auth/no-access`.
+- Refresh tokens are stored only in the user's `auth-refresh` cookie
+  (HTTP-only, 30-day cap). There is no server-side persistence, so a
+  user that clears their cookies must log in again. For a true C-case
+  product, mirror the refresh tokens into a server-side store keyed
+  by user id so the user keeps their session across devices.
 
 ## Phase 2 — Multi-workspace support
 

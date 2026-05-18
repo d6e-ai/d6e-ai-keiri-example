@@ -5,11 +5,17 @@
 // Usage:
 //   D6E_BASE_URL=... \
 //   D6E_WORKSPACE_ID=... \
-//   D6E_REFRESH_TOKEN=... \
+//   D6E_INIT_REFRESH_TOKEN=... \
 //   npm run init
 //
+// D6E_INIT_REFRESH_TOKEN is intentionally separate from the end-user
+// auth-refresh cookie that hooks.server.ts manages. It must belong to
+// a workspace ADMIN session (e.g. copied from a logged-in admin
+// browser's auth-refresh cookie) so /api/workspace-prompt-rules
+// accepts the POST.
+//
 // What it does:
-//   1. Exchanges D6E_REFRESH_TOKEN for a fresh access token via
+//   1. Exchanges D6E_INIT_REFRESH_TOKEN for a fresh access token via
 //      ${D6E_BASE_URL}/api/v1/auth/token. This endpoint accepts the
 //      refresh token on its own (no client_id / client_secret needed)
 //      and issues a token whose audience matches the same b-button
@@ -98,8 +104,8 @@ async function refreshAccessToken({ baseUrl, refreshToken }) {
 	if (!response.ok) {
 		fail(
 			`${target} rejected refresh (status=${response.status}): ${text}\n` +
-				`Likely cause: D6E_REFRESH_TOKEN was rotated in another session — ` +
-				`re-copy the auth-refresh cookie value from your browser dev tools.`
+				`Likely cause: D6E_INIT_REFRESH_TOKEN was rotated in another session — ` +
+				`re-copy the auth-refresh cookie value from your admin browser dev tools.`
 		);
 	}
 
@@ -166,7 +172,7 @@ async function listExistingRules({ baseUrl, workspaceId, accessToken }) {
 
 const baseUrl = trimTrailingSlashes(readEnv('D6E_BASE_URL'));
 const workspaceId = readEnv('D6E_WORKSPACE_ID');
-const refreshToken = readEnv('D6E_REFRESH_TOKEN');
+const refreshToken = readEnv('D6E_INIT_REFRESH_TOKEN');
 
 if (!UUID_RE.test(workspaceId)) {
 	fail(`D6E_WORKSPACE_ID must be a valid UUID, got "${workspaceId}".`);
