@@ -60,6 +60,12 @@
 
 	let pendingUploads = $state<PendingUploadView[]>([]);
 	let uploadedRefs = $state<UploadedFileView[]>([]);
+	// Counter of in-flight DELETE /api/upload/{fileId} round-trips.
+	// Folded into canExecute so the user cannot race a pending delete
+	// against "Generate journal": if the delete fails after the journal
+	// was already submitted, the file gets restored to the queue but
+	// the journal was generated without it, leaving the UI inconsistent.
+	let deletesInFlight = $state(0);
 
 	let isExecuting = $state(false);
 	let errorMessage = $state<string | null>(null);
@@ -70,10 +76,13 @@
 	let detailTask = $state<JournalTaskSummary | null>(null);
 
 	const hasUploadInFlight = $derived(pendingUploads.some((entry) => entry.status === 'uploading'));
-	const canExecute = $derived(uploadedRefs.length > 0 && !hasUploadInFlight && !isExecuting);
+	const hasDeleteInFlight = $derived(deletesInFlight > 0);
+	const canExecute = $derived(
+		uploadedRefs.length > 0 && !hasUploadInFlight && !hasDeleteInFlight && !isExecuting
+	);
 	const executeBlockedHint = $derived.by(() => {
 		if (isExecuting) return null;
-		if (hasUploadInFlight) return m.journal_upload_run_disabled_uploading();
+		if (hasUploadInFlight || hasDeleteInFlight) return m.journal_upload_run_disabled_uploading();
 		if (uploadedRefs.length === 0) return m.journal_upload_run_disabled_empty();
 		return null;
 	});
@@ -194,6 +203,7 @@
 			uploadedRefs = [...uploadedRefs.slice(0, insertAt), target, ...uploadedRefs.slice(insertAt)];
 		};
 
+		deletesInFlight += 1;
 		try {
 			const response = await fetch(`/api/upload/${encodeURIComponent(fileId)}`, {
 				method: 'DELETE'
@@ -225,6 +235,8 @@
 			errorMessage = m.journal_upload_remove_failed();
 			console.error('[ai-journal-page] handleRemove network error:', detail);
 			restore();
+		} finally {
+			deletesInFlight -= 1;
 		}
 	}
 

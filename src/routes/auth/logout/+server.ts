@@ -11,12 +11,18 @@
 //   back to a URL we choose via `redirect_uri`.
 //
 // Main specifications:
-//   - GET is supported for plain <a href> links.
-//   - POST is supported so the sidebar can submit a CSRF-safe form.
-//   - Both verbs:
-//       1. Wipe the auth-access / auth-refresh / auth-user / auth-oauth-state
+//   - Only POST is supported so the sidebar's CSRF-safe form is the
+//     sole entry point. A GET handler would let any third-party page
+//     force-sign-out our users by embedding e.g.
+//     `<img src="https://app.example/auth/logout">`, since GETs are
+//     fired by the browser without same-origin restrictions and have
+//     no CSRF token. The session is state-changing (cookies are
+//     cleared and d6e-auth's own session row is destroyed), so it
+//     belongs behind POST per REST safe-method semantics.
+//   - The POST handler:
+//       1. Wipes the auth-access / auth-refresh / auth-user / auth-oauth-state
 //          cookies on THIS origin.
-//       2. 303-redirect the browser to
+//       2. 303-redirects the browser to
 //          ${D6E_AUTH_URL}/auth/logout?redirect_uri=<this app's /auth/login>.
 //          d6e-auth deletes its own session cookie and forwards the
 //          browser to the supplied `redirect_uri`.
@@ -49,14 +55,14 @@ function buildUpstreamLogoutUrl(event: Parameters<RequestHandler>[0]): string {
 	return `${authUrl}/auth/logout?${params.toString()}`;
 }
 
-function handle(event: Parameters<RequestHandler>[0], method: 'GET' | 'POST'): never {
+export const POST: RequestHandler = async (event) => {
 	const had = {
 		access: Boolean(event.cookies.get('auth-access')),
 		refresh: Boolean(event.cookies.get('auth-refresh')),
 		user: Boolean(event.cookies.get('auth-user'))
 	};
 	console.info(
-		`[${CALLER_TAG}] ${method} received; clearing cookies (had access=${had.access} refresh=${had.refresh} user=${had.user})`
+		`[${CALLER_TAG}] POST received; clearing cookies (had access=${had.access} refresh=${had.refresh} user=${had.user})`
 	);
 	clearSession(event);
 	clearOauthStateCookie(event);
@@ -64,7 +70,4 @@ function handle(event: Parameters<RequestHandler>[0], method: 'GET' | 'POST'): n
 	const target = buildUpstreamLogoutUrl(event);
 	console.info(`[${CALLER_TAG}] redirecting browser to upstream logout: ${target}`);
 	throw redirect(303, target);
-}
-
-export const GET: RequestHandler = async (event) => handle(event, 'GET');
-export const POST: RequestHandler = async (event) => handle(event, 'POST');
+};
