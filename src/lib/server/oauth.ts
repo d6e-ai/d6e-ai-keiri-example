@@ -16,9 +16,6 @@
 //     ${D6E_AUTH_URL}/api/v1/auth/token with grant_type=authorization_code
 //     and returns the resulting tokens + expiry. The access_token in the
 //     response has `iss=d6e-auth` and is NOT a valid Bearer for b-button.
-//   - refreshAccessTokenAtAuth(caller, refreshToken): rarely used.
-//     Refreshes against d6e-auth itself. Kept around for completeness
-//     but most callers want refreshAccessTokenViaBaseUrl() instead.
 //   - refreshAccessTokenViaBaseUrl(caller, refreshToken): POSTs to
 //     ${D6E_BASE_URL}/api/v1/auth/token with grant_type=refresh_token.
 //     b-button accepts d6e-auth-issued refresh tokens here and returns
@@ -96,11 +93,15 @@ export function createOauthState(): string {
 }
 
 // Constant-time string comparison so a malicious client cannot probe
-// the state value with timing attacks.
+// the state value with timing attacks. We deliberately avoid an early
+// return on length mismatch so the loop always walks the longer of
+// the two strings; charCodeAt() returns NaN past the end of a string,
+// which coerces to 0 under bitwise XOR, and the length XOR seeded
+// into `diff` ensures unequal-length inputs still compare unequal.
 export function constantTimeEqual(a: string, b: string): boolean {
-	if (a.length !== b.length) return false;
-	let diff = 0;
-	for (let i = 0; i < a.length; i += 1) {
+	let diff = a.length ^ b.length;
+	const len = Math.max(a.length, b.length);
+	for (let i = 0; i < len; i += 1) {
 		diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
 	}
 	return diff === 0;
@@ -140,32 +141,6 @@ export async function exchangeAuthorizationCode(
 		client_id: clientId,
 		client_secret: clientSecret,
 		redirect_uri: redirectUri
-	});
-}
-
-/**
- * Refresh a token against d6e-auth itself. This is rarely the right
- * call from this app — d6e-auth issues tokens with `iss=d6e-auth`,
- * which the b-button API instance rejects with 401 (aud mismatch).
- * Prefer `refreshAccessTokenViaBaseUrl()` below for any token that
- * will be used as a Bearer header against `${D6E_BASE_URL}`.
- *
- * Exposed only so it stays available if a future flow needs to talk
- * to d6e-auth directly (e.g. /api/v1/auth/userinfo on d6e-auth).
- */
-export async function refreshAccessTokenAtAuth(
-	caller: string,
-	refreshToken: string
-): Promise<OauthTokens> {
-	const authUrl = getD6eAuthUrl(caller);
-	const clientId = getD6eAuthClientId(caller);
-	const clientSecret = getD6eAuthClientSecret(caller);
-
-	return postTokenEndpoint(caller, `${authUrl}/api/v1/auth/token`, {
-		grant_type: 'refresh_token',
-		refresh_token: refreshToken,
-		client_id: clientId,
-		client_secret: clientSecret
 	});
 }
 
