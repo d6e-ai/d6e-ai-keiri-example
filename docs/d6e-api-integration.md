@@ -231,6 +231,53 @@ and
 which in turn call helpers in
 [`src/lib/server/d6e-client.ts`](../src/lib/server/d6e-client.ts).
 
+## 6. External SaaS API access — `d6e_call_external_api` (MCP tool)
+
+**Hosted by:** the d6e MCP server, exposed indirectly via the SaaS proxy
+in the d6e Rust API. This sample app **does not call the proxy
+directly**; instead, the LLM running inside `execute-by-intent` invokes
+the MCP tool when the workspace prompt asks it to.
+
+**Tool signature (relevant fields):**
+
+```ts
+d6e_call_external_api({
+	provider: 'freee' | 'google_workspace' | ...,
+	method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
+	path: '/api/1/deals',
+	body?: { ... },
+	file_id?: '<d6e storage UUID>'  // upload binary as request body
+});
+```
+
+When `file_id` is set, the d6e Rust API resolves the storage file and
+streams its bytes as the request body (raw binary for `uploadType=media`,
+multipart/related metadata + binary for `uploadType=multipart`). This is
+how the Drive upload step works without re-fetching the receipt image
+through the LLM.
+
+OAuth tokens for `freee` and `google_workspace` are stored encrypted in
+d6e's `saas_credential` table per workspace. The proxy refreshes them
+when needed (with `SELECT FOR UPDATE` to avoid race conditions). The
+LLM never sees the tokens themselves; it only sees response bodies.
+
+**Why this app does not call the proxy directly:**
+
+The integration is entirely prompt-driven. The "freee に登録" button
+on the AI Journal page sends a fixed natural-language message wrapped in
+`<registration_request>...</registration_request>` to `/api/intent`; the
+Scenario D prompt (`scripts/prompts/freee-registration-prompt.md`)
+instructs the LLM to call `d6e_call_external_api` against `freee` and
+`google_workspace`. Keeping the orchestration inside the prompt means
+the same backend works for the Slack / Discord / LINE proxies without
+any code changes here.
+
+**Upstream references:**
+
+- MCP tool descriptor: [d6e `packages/mcp/src/server/mod.rs`](https://github.com/d6e-ai/d6e/blob/main/packages/mcp/src/server/mod.rs)
+- Proxy implementation: [d6e `packages/api/src/routes/v1/saas_proxy.rs`](https://github.com/d6e-ai/d6e/blob/main/packages/api/src/routes/v1/saas_proxy.rs)
+- Provider catalog: [d6e `packages/frontend/src/lib/saas-providers/catalog.ts`](https://github.com/d6e-ai/d6e/blob/main/packages/frontend/src/lib/saas-providers/catalog.ts)
+
 ## Auth model summary
 
 | Endpoint                                | Header / Body                          | Source variable                          |

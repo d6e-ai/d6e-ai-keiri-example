@@ -13,23 +13,30 @@ drifts off-contract.
 
 ## Scenarios
 
-The prompt classifies every turn into one of three buckets:
+The prompt classifies every turn into one of four buckets. A/B/C are
+defined in [`scripts/prompts/ai-keiri-prompt.md`](../scripts/prompts/ai-keiri-prompt.md)
+(workspace prompt rule #1). D is defined in
+[`scripts/prompts/freee-registration-prompt.md`](../scripts/prompts/freee-registration-prompt.md)
+(workspace prompt rule #2, registered manually in the d6e admin UI).
 
-| Scenario | Trigger                                                                                        | Required output                                  |
-| -------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------ |
-| A        | Message contains an attached image and **no** `<previous_journal>` tag.                        | 1–2 sentence intro + ` ```json``` ` journal body |
-| B        | Message contains a `<previous_journal>...</previous_journal>` tag (regardless of attachments). | 1-sentence intro + ` ```json``` ` journal body   |
-| C        | No image, no `<previous_journal>`.                                                              | Plain Japanese markdown. **No json fence.**      |
+| Scenario | Trigger                                                                                                                                              | Required output                                                       |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| A        | Message contains an attached image and **no** `<previous_journal>` / `<registration_request>` / `<additional_comment>` tag.                          | 1–2 sentence intro + ` ```json``` ` block with `kind: "journal"`     |
+| B        | Message contains a `<previous_journal>...</previous_journal>` tag (regardless of attachments).                                                       | 1-sentence intro + ` ```json``` ` block with `kind: "journal"`       |
+| C        | No image, no `<previous_journal>` / `<registration_request>` / `<additional_comment>`.                                                               | Plain Japanese markdown. **No json fence.**                           |
+| D        | Message contains `<registration_request>` (new registration), **or** prior assistant turn was `kind: "registration"` and message has `<additional_comment>`. | 1-sentence intro + ` ```json``` ` block with `kind: "registration"` |
 
 Why this split? The AI Journal page parses every assistant response with
-`parseJournalMessage()`. If the model emits a JSON fence on a general
-question (Scenario C), the parser will happily turn it into a journal
-table, which is confusing. Scenario C explicitly forbids the fence so
-the UI falls back to plain text rendering on `/ask`.
+`parseAssistantMessage()`. If the model emits a JSON fence on a general
+question (Scenario C), the parser will happily turn it into a card,
+which is confusing. Scenario C explicitly forbids the fence so the UI
+falls back to plain text rendering on `/ask`.
 
-## JSON schema
+## JSON schemas
 
-Authoritative definition: [`src/lib/journal-schema.ts`](../src/lib/journal-schema.ts).
+Authoritative definitions: [`src/lib/journal-schema.ts`](../src/lib/journal-schema.ts).
+
+### `kind: "journal"` (Scenarios A / B)
 
 ```json
 {
@@ -50,14 +57,55 @@ Authoritative definition: [`src/lib/journal-schema.ts`](../src/lib/journal-schem
 
 Constraints (enforced by Zod):
 
-- `kind` MUST be the literal `"journal"`. Anything else is treated as a
-  schema mismatch and falls back to raw text.
+- `kind` MUST be the literal `"journal"`.
 - `entries` must be a non-empty array.
 - `date`, `debit_account`, `credit_account`, `description` are non-empty
   strings.
 - `amount` is a non-negative integer (JPY, no decimals).
 - `tax_amount` is an optional non-negative integer.
 - `warnings` defaults to `[]` when omitted.
+
+### `kind: "registration"` (Scenario D)
+
+```json
+{
+	"kind": "registration",
+	"status": "success",
+	"freee": {
+		"company_id": 1234,
+		"deals": [
+			{
+				"deal_id": 987654,
+				"date": "2026-04-30",
+				"amount": 1280,
+				"description": "コンビニ事務用品"
+			}
+		]
+	},
+	"drive": {
+		"uploads": [
+			{
+				"file_id": "1A2B3C...",
+				"name": "receipt-2026-04-30.jpg",
+				"web_view_link": "https://drive.google.com/file/d/1A2B3C.../view"
+			}
+		]
+	},
+	"warnings": [],
+	"follow_up_question": null
+}
+```
+
+Constraints (enforced by Zod):
+
+- `kind` MUST be the literal `"registration"`.
+- `status` is one of `"success"`, `"partial"`, `"failed"`, `"needs_input"`.
+- `freee` / `drive` may be `null` when the corresponding side never ran.
+- `freee.deals[]` contains only deals that were actually created upstream
+  (failed rows are reported via `warnings` instead).
+- `drive.uploads[].web_view_link` may be `null` when the Drive API
+  response omitted it.
+- `follow_up_question` is `null` unless `status === "needs_input"`.
 
 Things deliberately **not** enforced:
 
@@ -70,11 +118,12 @@ Things deliberately **not** enforced:
 
 ## Parse layer
 
-`parseJournalMessage(message)` returns one of two shapes:
+`parseAssistantMessage(message)` returns one of three shapes:
 
 ```ts
 type ParseResult =
 	| { kind: 'journal'; result: JournalResult; rawText: string }
+	| { kind: 'registration'; result: RegistrationResult; rawText: string }
 	| {
 			kind: 'fallback';
 			reason: 'no_code_block' | 'invalid_json' | 'schema_mismatch';
@@ -83,11 +132,15 @@ type ParseResult =
 	  };
 ```
 
+`parseJournalMessage()` is kept as a thin backwards-compatible alias for
+the same function so existing call sites continue to work.
+
 Algorithm:
 
 1. Iterate every fenced code block in the message (`` ```...``` ``).
 2. Try `JSON.parse` on each block; skip on syntax error and warn.
-3. Run the parsed value through `JournalResultSchema.safeParse`.
+3. Dispatch on `kind`: run the value through `JournalResultSchema` or
+   `RegistrationResultSchema` as appropriate.
 4. Return the first match. If none match, return a `fallback` result
    with the original text intact.
 
@@ -98,7 +151,9 @@ specific reason so you can grep the dev console.
 
 Revisions happen via natural-language messages from the user, not by
 editing the table in place. The AI Journal page composes the new
-message like this:
+message based on the **current** assistant payload kind:
+
+### Revising a journal table (Scenario B trigger)
 
 ```
 前回生成した仕訳に対する修正依頼です。
@@ -116,17 +171,69 @@ message like this:
 ```
 
 The same `inputFileRefs` is sent again so the LLM can re-read the
-receipt image. This triggers Scenario B in the prompt and the model
-returns an updated JSON block that supersedes the prior one.
+receipt image. The model returns an updated `kind: "journal"` block
+that supersedes the prior one.
+
+### Following up on a registration turn (Scenario D follow-up)
+
+```
+直前の freee 登録ターンへの追加コメントです。
+<additional_comment>
+<user's free-form text>
+</additional_comment>
+
+必要に応じて未完了の登録 / Drive アップロードを実行し、最新の状態を kind:"registration" JSON で返してください。
+```
+
+This is used to answer `follow_up_question` (e.g. "use company ID 1234")
+or to add late instructions ("also put the file in folder 1ABC..."). The
+LLM continues the registration conversation and returns an updated
+`kind: "registration"` payload.
+
+## Registration flow
+
+The "freee に登録" button on the journal result card sends a fixed
+message that triggers Scenario D:
+
+```
+下記の仕訳を freee に登録し、添付の領収書を Google Drive にアップロードしてください。
+<registration_request>
+{
+	"kind": "journal",
+	"entries": [...],
+	"warnings": []
+}
+</registration_request>
+```
+
+The LLM is expected to:
+
+1. Confirm freee / google_workspace are connected (`d6e_list_saas_credentials`).
+2. Resolve `company_id` / `account_item_id` / `tax_code` against the
+   freee API (`GET /api/1/companies` etc.).
+3. Create deals (`POST /api/1/deals`) and upload the receipt to Google
+   Drive (`POST /upload/drive/v3/files?uploadType=multipart` with
+   `file_id`).
+4. Return a single `kind: "registration"` JSON block describing what
+   actually happened.
+
+The receipt file ID is re-sent in `inputFileRefs` so the LLM has direct
+access to the binary again (same mechanism that powers the original
+journal generation).
 
 ## Tuning checklist
 
 If the model drifts off-contract, work through these in order:
 
-1. **Did the prompt rule register correctly?**
+1. **Did the prompt rules register correctly?**
    Visit the d6e frontend `Settings > Workspace > Prompt rules` and
-   confirm the latest text from `scripts/prompts/ai-keiri-prompt.md` is
-   listed. If not, re-run `npm run init`.
+   confirm BOTH prompt rules are listed:
+   - `scripts/prompts/ai-keiri-prompt.md` (Scenarios A/B/C). Re-run
+     `npm run init` if it is missing.
+   - `scripts/prompts/freee-registration-prompt.md` (Scenario D). This
+     one is registered manually in the d6e admin UI because the freee /
+     google_workspace connection state is verified there as well. The
+     repository's `npm run init` does not register it.
 
 2. **Is the model emitting markdown around the JSON?**
    The fence regex tolerates leading/trailing prose, so a sentence or
@@ -157,11 +264,16 @@ If the model drifts off-contract, work through these in order:
 
 - Editing the table in place (use a revision comment instead).
 - Persisting prior turns across page reloads (the revision JSON lives
-  in component state).
-- Calling d6e workflows or STFs from this app. The prompt explicitly
+  in component state, although chat_session rows persist the dialogue).
+- Calling d6e workflows or STFs from this app. The Scenario A/B/C prompt
   tells the LLM not to invoke tools because none are registered for
-  this example.
+  this example. Scenario D explicitly allows `d6e_call_external_api`
+  for freee / google_workspace API access — that is the entire point of
+  the "freee に登録" button.
+- Triggering "freee に登録" from the completed-task detail dialog. The
+  fileRef needed to re-upload the receipt is not yet recovered from the
+  chat_session row; tracked as a separate piece of work.
 
 The full integration plan in
 [`migration-to-full-integration.md`](./migration-to-full-integration.md)
-covers all three above.
+covers the persistence side.
