@@ -627,9 +627,17 @@
 	</section>
 
 	{#if completedBannerVisible}
+		<!--
+			Use `text-success` (the success accent) rather than
+			`text-success-foreground` (which is the near-white meant to
+			sit on top of a filled success button). The previous setup
+			put near-white text on the `bg-success/10` tinted background
+			and was effectively unreadable. The destructive error banner
+			at the bottom of this page uses the same pattern.
+		-->
 		<div
 			class={cn(
-				'flex items-center gap-3 rounded-xl border border-success/40 bg-success/10 p-4 text-sm text-success-foreground'
+				'flex items-center gap-3 rounded-xl border border-success/40 bg-success/10 p-4 text-sm font-medium text-success'
 			)}
 			role="status"
 		>

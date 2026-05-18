@@ -79,7 +79,12 @@
 	const statusBadgeClass = $derived.by(() => {
 		switch (status) {
 			case 'success':
-				return 'bg-success/15 text-success-foreground border-success/30';
+				// `text-success` (the success accent), NOT `text-success-foreground`.
+				// The latter is the near-white colour intended to sit on top of a
+				// fully filled bg-success button; placing it on the `bg-success/15`
+				// tint here made the label effectively invisible (see the matching
+				// note in task-card.svelte and the completion banner in +page.svelte).
+				return 'bg-success/15 text-success border-success/30';
 			case 'partial':
 				return 'bg-warning/15 text-warning-foreground border-warning/40';
 			case 'failed':
