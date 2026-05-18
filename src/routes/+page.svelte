@@ -730,7 +730,7 @@
 			<JournalResult
 				parsed={parseResult}
 				onRegister={handleRegister}
-				registerDisabled={isExecuting || isCompleting}
+				registerDisabled={isExecuting || isCompleting || uploadedRefs.length === 0}
 				{registerInFlight}
 				onComplete={handleComplete}
 				completeDisabled={!canComplete}
