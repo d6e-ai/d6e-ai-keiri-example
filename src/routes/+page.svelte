@@ -445,7 +445,13 @@
 	}
 
 	async function handleRevise(comment: string): Promise<void> {
-		if (uploadedRefs.length === 0 || !parseResult) {
+		// Note: uploadedRefs may legitimately be empty here when a legacy
+		// chat_session (persisted before inputFileRefs were embedded in
+		// user UIMessages) is restored via ?chatSessionId=<uuid>. The
+		// revise form is still meaningful in that case — the user can
+		// nudge the LLM about the existing journal without re-attaching
+		// receipts — so we only gate on parseResult.
+		if (!parseResult) {
 			errorMessage = 'No previous assistant response to revise.';
 			return;
 		}
