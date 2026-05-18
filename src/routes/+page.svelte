@@ -178,10 +178,26 @@
 			const response = await fetch(`/api/upload/${encodeURIComponent(fileId)}`, {
 				method: 'DELETE'
 			});
+			// If hooks.server.ts redirected the request to /auth/login (e.g.
+			// the session expired mid-interaction), the browser may follow
+			// the chain into a 200 HTML response. response.ok is then true
+			// but the file was never actually deleted on d6e Storage —
+			// validate the JSON payload shape to detect this case and
+			// restore the entry so it does not orphan the blob.
+			const payload: unknown = await response.json().catch(() => null);
 			if (!response.ok) {
 				const detail = `HTTP ${response.status}`;
 				errorMessage = m.journal_upload_remove_failed();
 				console.error('[ai-journal-page] handleRemove failed:', detail);
+				restore();
+			} else if (
+				!payload ||
+				typeof payload !== 'object' ||
+				(payload as { ok?: unknown }).ok !== true
+			) {
+				const detail = `HTTP ${response.status} returned an unexpected body (session may have expired)`;
+				errorMessage = m.journal_upload_remove_failed();
+				console.error('[ai-journal-page] handleRemove invalid payload:', detail);
 				restore();
 			}
 		} catch (err) {
