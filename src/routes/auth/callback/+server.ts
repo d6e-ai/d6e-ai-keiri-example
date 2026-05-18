@@ -23,8 +23,11 @@
 //          -> returns a pair signed with the audience the API expects.
 //     This mirrors how scripts/init-workspace.mjs upgrades its admin
 //     refresh token before talking to the b-button API.
-//   - Membership probe timeout: 10 seconds. Hard upstream errors fold
-//     into /auth/no-access too, since we cannot prove membership.
+//   - Membership probe timeout: 10 seconds. Only an explicit 403/404
+//     from the workspace probe routes the user to /auth/no-access;
+//     transient errors (network timeout, DNS failure, 5xx from d6e)
+//     fall back to /auth/login so the user can simply retry instead
+//     of seeing a misleading "contact your administrator" message.
 //
 // Limitations:
 //   - We trust the JWT's sub/email/name claims for display purposes.
@@ -147,7 +150,7 @@ export const GET: RequestHandler = async (event) => {
 					: String(err);
 		console.error(`[${CALLER_TAG}] membership probe failed: ${msg}`);
 		clearSession(event);
-		throw redirect(302, '/auth/no-access');
+		throw redirect(302, '/auth/login');
 	}
 	if (!memberOk) {
 		clearSession(event);
