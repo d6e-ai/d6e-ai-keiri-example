@@ -72,7 +72,11 @@
 	import { markCompletedTitle } from '$lib/journal-title';
 	import * as m from '$lib/paraglide/messages.js';
 	import { parseJournalMessage, type ParseResult } from '$lib/parse-journal';
-	import type { PendingUploadView, UploadedFileView } from '$lib/upload-types';
+	import {
+		isUploadedFileView,
+		type PendingUploadView,
+		type UploadedFileView
+	} from '$lib/upload-types';
 	import { cn } from '$lib/utils';
 
 	import type { PageData } from './$types';
@@ -217,18 +221,6 @@
 		return typeof crypto !== 'undefined' && 'randomUUID' in crypto
 			? crypto.randomUUID()
 			: `local-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-	}
-
-	function isUploadedFileView(value: unknown): value is UploadedFileView {
-		if (!value || typeof value !== 'object') return false;
-		const v = value as Record<string, unknown>;
-		return (
-			typeof v.fileId === 'string' &&
-			v.fileId.length > 0 &&
-			typeof v.filename === 'string' &&
-			typeof v.mimeType === 'string' &&
-			typeof v.sizeBytes === 'number'
-		);
 	}
 
 	function syncChatSessionIdToUrl(sessionId: string | null): void {

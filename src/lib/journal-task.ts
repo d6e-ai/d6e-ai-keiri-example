@@ -18,6 +18,7 @@ import type { JournalResult } from './journal-schema';
 import { COMPLETED_SUFFIX, isCompletedTitle, isJournalTitle, KEIRI_PREFIX } from './journal-title';
 import { parseJournalMessage, type ParseResult } from './parse-journal';
 import type { ChatSessionMessage, ChatSessionRow, IntentInputFileRef } from './server/d6e-client';
+import { isUploadedFileView } from './upload-types';
 
 /**
  * Shared shape returned by the SSR loaders for the AI Journal page and
@@ -115,25 +116,6 @@ function stripTitlePrefix(title: string): string {
 }
 
 /**
- * Narrow an unknown value into an IntentInputFileRef. Used by the
- * inputFileRefs reader below to defensively validate jsonb data; any
- * shape that does not exactly match the four required string/number
- * fields is rejected so a malformed legacy row cannot corrupt the
- * receipt list rendered after restore.
- */
-function isIntentInputFileRef(value: unknown): value is IntentInputFileRef {
-	if (!value || typeof value !== 'object') return false;
-	const v = value as Record<string, unknown>;
-	return (
-		typeof v.fileId === 'string' &&
-		v.fileId.length > 0 &&
-		typeof v.filename === 'string' &&
-		typeof v.mimeType === 'string' &&
-		typeof v.sizeBytes === 'number'
-	);
-}
-
-/**
  * Walk a chat_session row's messages from newest to oldest and return
  * the inputFileRefs array carried by the most recent user UIMessage.
  * /api/intent embeds this snapshot when persisting a turn so the AI
@@ -158,7 +140,7 @@ export function extractLatestInputFileRefs(
 
 		const refs: IntentInputFileRef[] = [];
 		for (const entry of refsRaw) {
-			if (isIntentInputFileRef(entry)) {
+			if (isUploadedFileView(entry)) {
 				refs.push({
 					fileId: entry.fileId,
 					filename: entry.filename,
