@@ -31,7 +31,7 @@ sequenceDiagram
     Auth-->>App: access_token + refresh_token
     App->>API: GET /api/v1/workspaces/{D6E_WORKSPACE_ID}
     alt 200 member
-        App-->>U: Set-Cookie auth-access, auth-refresh; 302 /
+        App-->>U: Set-Cookie auth-access, auth-refresh, 302 /
     else 403/404
         App-->>U: 302 /auth/no-access
     end
