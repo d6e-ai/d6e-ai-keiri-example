@@ -69,7 +69,9 @@ function decodeStateCookieValue(raw: string | undefined): StateCookiePayload | n
 		if (
 			!parsed.returnTo.startsWith('/') ||
 			parsed.returnTo.startsWith('//') ||
-			parsed.returnTo.startsWith('/\\')
+			parsed.returnTo.startsWith('/\\') ||
+			parsed.returnTo === '/auth' ||
+			parsed.returnTo.startsWith('/auth/')
 		) {
 			return { state: parsed.state, returnTo: '/' };
 		}

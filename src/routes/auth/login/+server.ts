@@ -11,6 +11,13 @@
 //   - state cookie format: base64url(JSON({ state: string, returnTo: string }))
 //   - Only same-origin paths starting with "/" (and not "//") are
 //     accepted as returnTo to prevent open redirects.
+//   - Paths under /auth/* are rejected as returnTo even though they
+//     are same-origin: bouncing back to /auth/login after a successful
+//     callback would just start a new OAuth round-trip, and because
+//     d6e-auth's session cookie is still live, that round-trip would
+//     complete silently and redirect to /auth/login again, looping
+//     until the browser's redirect cap (~20 hops) trips
+//     ERR_TOO_MANY_REDIRECTS.
 //
 // Limitations:
 //   - This endpoint always issues a 302 and never renders HTML. If you
@@ -27,7 +34,12 @@ import type { RequestHandler } from './$types';
 const CALLER_TAG = '/auth/login';
 
 function isSafeReturnTo(value: string): boolean {
-	return value.startsWith('/') && !value.startsWith('//') && !value.startsWith('/\\');
+	if (!value.startsWith('/')) return false;
+	if (value.startsWith('//') || value.startsWith('/\\')) return false;
+	// Block /auth and /auth/* so a crafted returnTo cannot trap the
+	// post-login redirect inside the auth flow itself.
+	if (value === '/auth' || value.startsWith('/auth/')) return false;
+	return true;
 }
 
 function encodeStateCookieValue(state: string, returnTo: string): string {
