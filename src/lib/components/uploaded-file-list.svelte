@@ -29,12 +29,14 @@
 		pending,
 		uploaded,
 		disabled = false,
-		onremove
+		onremove,
+		ondismiss
 	}: {
 		pending: PendingUploadView[];
 		uploaded: UploadedFileView[];
 		disabled?: boolean;
 		onremove: (fileId: string) => void;
+		ondismiss: (localId: string) => void;
 	} = $props();
 
 	function formatSize(bytes: number): string {
@@ -84,6 +86,20 @@
 								: (item.errorMessage ?? '')}
 						</p>
 					</div>
+					{#if item.status === 'error'}
+						<button
+							type="button"
+							class={cn(
+								'inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors',
+								disabled ? 'cursor-not-allowed opacity-50' : 'hover:bg-muted hover:text-destructive'
+							)}
+							{disabled}
+							aria-label={m.journal_upload_remove()}
+							onclick={() => ondismiss(item.localId)}
+						>
+							<Trash2Icon class="size-4" aria-hidden="true" />
+						</button>
+					{/if}
 				</li>
 			{/each}
 

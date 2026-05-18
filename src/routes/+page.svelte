@@ -159,6 +159,10 @@
 		});
 	}
 
+	function handleDismissPending(localId: string): void {
+		pendingUploads = pendingUploads.filter((entry) => entry.localId !== localId);
+	}
+
 	async function handleRemove(fileId: string): Promise<void> {
 		const targetIndex = uploadedRefs.findIndex((ref) => ref.fileId === fileId);
 		if (targetIndex === -1) return;
@@ -369,6 +373,7 @@
 			uploaded={uploadedRefs}
 			disabled={isExecuting}
 			onremove={handleRemove}
+			ondismiss={handleDismissPending}
 		/>
 
 		<div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
