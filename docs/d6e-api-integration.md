@@ -166,7 +166,7 @@ user. The flow lives in three SvelteKit routes:
 | ----------------------------------- | ---------------------------------- |
 | Start (state cookie + 302 to auth)  | `GET /auth/login`                  |
 | Callback (state verify + exchange)  | `GET /auth/callback`               |
-| Logout (cookie clear + 302)         | `GET /auth/logout` (or POST form)  |
+| Logout (local + upstream)           | `GET /auth/logout` (or POST form)  |
 | Membership reject                   | `GET /auth/no-access`              |
 
 ### Stage 1 — d6e-auth (`${D6E_AUTH_URL}/api/v1/auth/token`)
@@ -239,6 +239,28 @@ endpoints — `exchangeAuthorizationCode()` for stage 1,
 store and exp-based refresh, always via b-button), and
 [`src/hooks.server.ts`](../src/hooks.server.ts) (per-request session
 loading + unauthenticated redirect).
+
+### Logout — local cookies + d6e-auth session
+
+`/auth/logout` does **two** things in a single hop:
+
+1. Deletes the four local cookies (`auth-access`, `auth-refresh`,
+   `auth-user`, `auth-oauth-state`).
+2. 303-redirects the browser to
+   `${D6E_AUTH_URL}/auth/logout?redirect_uri=${origin}/auth/login`,
+   which deletes d6e-auth's own session row + cookie before sending
+   the user back to this app's `/auth/login`.
+
+The upstream hop is required because d6e-auth holds its own session
+cookie on `${D6E_AUTH_URL}`. Without step 2, hitting `/auth/login`
+immediately after a logout would just call back to
+`${D6E_AUTH_URL}/auth/login` with the still-live session, d6e-auth
+would silently issue a fresh `code`, this app would run the two-stage
+exchange again, and the user would end up logged in within ~200 ms
+of clicking "logout".
+
+`d6e-auth`'s logout endpoint reference:
+[d6e-auth `src/routes/auth/logout/+server.ts`](https://github.com/d6e-ai/d6e-auth/blob/main/src/routes/auth/logout/+server.ts).
 
 ### Workspace allow-list
 

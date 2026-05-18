@@ -99,7 +99,7 @@ src/
 │   ├── auth/+layout.svelte                  # Sidebar-less layout for /auth/*
 │   ├── auth/login/+server.ts                # Start OAuth2 (state cookie + 302)
 │   ├── auth/callback/+server.ts             # OAuth2 code exchange + membership
-│   ├── auth/logout/+server.ts               # Clear cookies + 302 /auth/login
+│   ├── auth/logout/+server.ts               # Clear local cookies + delegate to d6e-auth logout
 │   ├── auth/no-access/+page.svelte          # Workspace allow-list reject page
 │   └── api/
 │       ├── upload/+server.ts                # POST /api/upload  -> d6e Files API
@@ -152,7 +152,7 @@ messages/
 | `src/lib/server/d6e-client.ts`                          | Bearer- and cookie-authed fetch wrappers for files / execute-by-intent / chat-sessions; every entry point now takes `accessToken: string` explicitly.         |
 | `src/routes/auth/login/+server.ts`                      | Generate a state cookie and 302 the user to `${D6E_AUTH_URL}/auth/login`.                                                                                     |
 | `src/routes/auth/callback/+server.ts`                   | Verify state, exchange the code, probe workspace membership, set session cookies (or send the user to `/auth/no-access`).                                     |
-| `src/routes/auth/logout/+server.ts`                     | Clear session cookies and 302 to `/auth/login`.                                                                                                               |
+| `src/routes/auth/logout/+server.ts`                     | Clear local session cookies and 303 to `${D6E_AUTH_URL}/auth/logout?redirect_uri=/auth/login` so d6e-auth also drops its own session cookie. Without this hop the next `/auth/login` would silently re-issue a code from the still-live d6e-auth session and put the user back in. |
 | `src/routes/api/upload/+server.ts`                      | POST `multipart/form-data` -> d6e Storage. Uses `event.locals.accessToken`.                                                                                   |
 | `src/routes/api/upload/[fileId]/+server.ts`             | DELETE one previously uploaded file when the user removes it from the queue before pressing "Generate journal".                                               |
 | `src/routes/api/intent/+server.ts`                      | Calls `executeByIntent` with the full `inputFileRefs[]`, then persists user+assistant messages into a `chat_session`.                                         |

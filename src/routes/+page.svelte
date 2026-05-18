@@ -145,11 +145,7 @@
 		const restore = () => {
 			if (uploadedRefs.some((ref) => ref.fileId === fileId)) return;
 			const insertAt = Math.min(targetIndex, uploadedRefs.length);
-			uploadedRefs = [
-				...uploadedRefs.slice(0, insertAt),
-				target,
-				...uploadedRefs.slice(insertAt)
-			];
+			uploadedRefs = [...uploadedRefs.slice(0, insertAt), target, ...uploadedRefs.slice(insertAt)];
 		};
 
 		try {
