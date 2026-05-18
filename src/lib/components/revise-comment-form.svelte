@@ -1,26 +1,53 @@
 <script lang="ts">
-	// Textarea + submit button used to ask the LLM to regenerate the
-	// current journal table with a natural-language correction.
+	// Textarea + submit button used to send a natural-language follow-up
+	// message to /api/intent. Two modes are supported via the `mode` prop:
 	//
-	// The parent page is responsible for embedding the previous JSON
-	// inside a <previous_journal>...</previous_journal> tag in the
-	// outgoing message; this component is concerned only with the input
-	// surface itself.
+	//   - 'journal'  (default) -> "Revise the table" UX. Parent embeds the
+	//     previous JSON inside <previous_journal>...</previous_journal>
+	//     before calling executeByIntent so the LLM regenerates the entries.
+	//   - 'followup'           -> generic "send another comment" UX used
+	//     after a registration turn. Parent wraps the text in
+	//     <additional_comment>...</additional_comment> so the LLM treats it
+	//     as a continuation of the registration conversation instead of a
+	//     revise request.
+	//
+	// This component is concerned only with the input surface itself:
+	// labels, placeholder, and button text. Networking, persistence, and
+	// the surrounding chat session context are all handled by the parent
+	// page.
 
-	import { RefreshCwIcon } from '@lucide/svelte';
+	import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw';
+	import SendIcon from '@lucide/svelte/icons/send';
 
 	import * as m from '$lib/paraglide/messages.js';
 	import { cn } from '$lib/utils';
 
+	export type ReviseFormMode = 'journal' | 'followup';
+
 	let {
 		onsubmit,
-		disabled = false
+		disabled = false,
+		mode = 'journal'
 	}: {
 		onsubmit: (comment: string) => void;
 		disabled?: boolean;
+		mode?: ReviseFormMode;
 	} = $props();
 
 	let comment = $state('');
+
+	const heading = $derived(
+		mode === 'followup' ? m.revise_form_heading_followup() : m.revise_form_heading_journal()
+	);
+	const hint = $derived(
+		mode === 'followup' ? m.revise_form_hint_followup() : m.revise_form_hint_journal()
+	);
+	const placeholder = $derived(
+		mode === 'followup' ? m.revise_form_placeholder_followup() : m.revise_form_placeholder_journal()
+	);
+	const submitLabel = $derived(
+		mode === 'followup' ? m.revise_form_submit_followup() : m.revise_form_submit_journal()
+	);
 
 	function submit(event: SubmitEvent): void {
 		event.preventDefault();
@@ -33,8 +60,8 @@
 
 <form class="space-y-3 rounded-xl border bg-card p-4 shadow-sm" onsubmit={submit}>
 	<div>
-		<h3 class="text-base font-semibold">{m.journal_revise_heading()}</h3>
-		<p class="mt-1 text-xs text-muted-foreground">{m.journal_revise_hint()}</p>
+		<h3 class="text-base font-semibold">{heading}</h3>
+		<p class="mt-1 text-xs text-muted-foreground">{hint}</p>
 	</div>
 
 	<textarea
@@ -43,7 +70,7 @@
 			'placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
 			'min-h-24'
 		)}
-		placeholder={m.journal_revise_placeholder()}
+		{placeholder}
 		bind:value={comment}
 		{disabled}
 	></textarea>
@@ -59,8 +86,12 @@
 			)}
 			disabled={disabled || comment.trim().length === 0}
 		>
-			<RefreshCwIcon class="size-4" aria-hidden="true" />
-			{m.journal_revise_submit()}
+			{#if mode === 'followup'}
+				<SendIcon class="size-4" aria-hidden="true" />
+			{:else}
+				<RefreshCwIcon class="size-4" aria-hidden="true" />
+			{/if}
+			{submitLabel}
 		</button>
 	</div>
 </form>

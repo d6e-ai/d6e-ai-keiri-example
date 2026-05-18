@@ -120,6 +120,37 @@ npm run dev
 Open <http://localhost:5173> (or whichever port Vite assigns) and try the
 AI Journal page.
 
+### 5. (Optional) Enable the "freee に登録" button
+
+Journal generation works as soon as step 3 finishes. The
+[`scripts/prompts/freee-registration-prompt.md`](./scripts/prompts/freee-registration-prompt.md)
+file is **not** registered by `npm run init` — it is a paste-target for
+the d6e chat UI. To activate the registration flow, copy that file in
+full and paste it into a d6e chat in the same workspace. The d6e AI
+then walks you through a short discovery flow:
+
+1. checks that `freee` and `google_workspace` are connected
+   (`d6e_list_saas_credentials`),
+2. calls freee `GET /api/1/companies` and Google Drive
+   `GET /drive/v3/files` to ask **which company** and **which Drive
+   parent folder** to use, then
+3. bakes those choices into a per-workspace concrete copy of Scenario D
+   and **inserts it just before the `## 共通ルール` heading** of the
+   existing prompt rule (so A/B/C/D end up as a contiguous block) via
+   `d6e_list_workspace_prompt_rules` and
+   `d6e_update_workspace_prompt_rule`.
+
+From that point on, pressing "freee に登録" on a generated journal
+returns a structured `kind: "registration"` payload that reuses the
+pre-confirmed company and parent folder on every press — the user is no
+longer asked at runtime. Receipts are filed under
+`<parent folder>/YYYY/MM/` so monthly browsing in Drive is easy; the
+LLM auto-creates the year/month folders the first time they are
+needed. See
+[`docs/llm-output-contract.md`](./docs/llm-output-contract.md) for the
+activation contract, idempotency rules, and how to rebind the company
+or parent folder later.
+
 ## Documentation
 
 - [`docs/architecture.md`](./docs/architecture.md) — request flow and directory layout
