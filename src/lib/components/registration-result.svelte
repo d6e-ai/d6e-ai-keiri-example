@@ -11,18 +11,43 @@
 	// resending the user's follow-up comment back into /api/intent. The raw
 	// assistant text is exposed via a <details> disclosure to keep parity with
 	// JournalResult and aid debugging when the schema barely matched.
+	//
+	// When the parent supplies an `onComplete` callback and the status is
+	// 'success', a "完了にする" button is rendered below the data sections.
+	// Clicking it asks the parent to mark the chat_session as completed
+	// (moving it to /tasks completed tab) and reset the page.
 
 	import AlertCircleIcon from '@lucide/svelte/icons/alert-circle';
 	import AlertTriangleIcon from '@lucide/svelte/icons/alert-triangle';
 	import CheckCircle2Icon from '@lucide/svelte/icons/check-circle-2';
 	import ExternalLinkIcon from '@lucide/svelte/icons/external-link';
 	import HelpCircleIcon from '@lucide/svelte/icons/help-circle';
+	import LoaderCircleIcon from '@lucide/svelte/icons/loader-circle';
 
 	import * as m from '$lib/paraglide/messages.js';
 	import type { ParsedRegistration } from '$lib/parse-journal';
 	import { cn, formatJpyAmount } from '$lib/utils';
 
-	let { parsed }: { parsed: ParsedRegistration } = $props();
+	let {
+		parsed,
+		onComplete,
+		completeDisabled = false,
+		completeInFlight = false
+	}: {
+		parsed: ParsedRegistration;
+		// Optional callback invoked when the user clicks the "完了にする"
+		// button. The button is hidden when this prop is omitted so
+		// surfaces that should not expose completion (e.g. the task
+		// detail dialog) leave it off.
+		onComplete?: () => void | Promise<void>;
+		// Disables the complete button regardless of state. Used while
+		// the parent has another network call in flight.
+		completeDisabled?: boolean;
+		// Replaces the button label with a spinner + localised loading
+		// text. Independent from completeDisabled so the parent can
+		// still convey "I am marking this completed right now".
+		completeInFlight?: boolean;
+	} = $props();
 
 	// Derived view-model. Keeping these in $derived() rather than inline
 	// keeps the template flat and makes the empty-state logic easy to
@@ -71,6 +96,15 @@
 
 	function formatDealId(value: number | string): string {
 		return typeof value === 'number' ? String(value) : value;
+	}
+
+	// "完了" は status === 'success' のときだけ意味がある。partial /
+	// failed / needs_input は仕訳がまだ閉じ切っていないのでボタンを出さない。
+	const showCompleteButton = $derived(status === 'success' && typeof onComplete === 'function');
+
+	function handleCompleteClick(): void {
+		if (completeDisabled || completeInFlight) return;
+		void onComplete?.();
 	}
 </script>
 
@@ -200,6 +234,36 @@
 				</li>
 			{/each}
 		</ul>
+	{/if}
+
+	{#if showCompleteButton}
+		<div class="space-y-2 rounded-lg border border-success/40 bg-success/5 p-3">
+			<div>
+				<h4 class="text-sm font-semibold text-foreground">{m.journal_complete_heading()}</h4>
+				<p class="mt-1 text-xs text-muted-foreground">{m.journal_complete_hint()}</p>
+			</div>
+			<div class="flex justify-end">
+				<button
+					type="button"
+					class={cn(
+						'inline-flex items-center gap-2 rounded-md bg-success px-4 py-2 text-sm font-medium text-success-foreground shadow-sm transition-colors',
+						completeDisabled || completeInFlight
+							? 'cursor-not-allowed opacity-60'
+							: 'hover:bg-success/90'
+					)}
+					disabled={completeDisabled || completeInFlight}
+					onclick={handleCompleteClick}
+				>
+					{#if completeInFlight}
+						<LoaderCircleIcon class="size-4 animate-spin" aria-hidden="true" />
+						{m.journal_complete_loading()}
+					{:else}
+						<CheckCircle2Icon class="size-4" aria-hidden="true" />
+						{m.journal_complete_button()}
+					{/if}
+				</button>
+			</div>
+		</div>
 	{/if}
 
 	<details class="rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground">

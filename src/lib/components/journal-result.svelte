@@ -31,7 +31,10 @@
 		parsed,
 		onRegister,
 		registerDisabled = false,
-		registerInFlight = false
+		registerInFlight = false,
+		onComplete,
+		completeDisabled = false,
+		completeInFlight = false
 	}: {
 		parsed: ParseResult;
 		// Optional callback invoked when the user clicks the "freee に登録"
@@ -45,6 +48,13 @@
 		// when true. Independent from registerDisabled so the parent can
 		// still show a busy state for "I am calling /api/intent right now".
 		registerInFlight?: boolean;
+		// Optional callback invoked when the user clicks the "完了にする"
+		// button rendered by RegistrationResult. Forwarded as-is; surfaces
+		// that should not expose completion (e.g. the task detail dialog)
+		// simply omit this prop.
+		onComplete?: () => void | Promise<void>;
+		completeDisabled?: boolean;
+		completeInFlight?: boolean;
 	} = $props();
 
 	const renderedFallback = $derived(
@@ -149,7 +159,7 @@
 		</details>
 	</div>
 {:else if parsed.kind === 'registration'}
-	<RegistrationResult {parsed} />
+	<RegistrationResult {parsed} {onComplete} {completeDisabled} {completeInFlight} />
 {:else}
 	<div class="space-y-3 rounded-xl border border-warning/40 bg-warning/5 p-4">
 		<div class="flex items-center gap-2 text-warning-foreground">
