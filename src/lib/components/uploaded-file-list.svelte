@@ -14,6 +14,11 @@
 	//   - Uploaded entries are keyed by their server-assigned fileId.
 	//   - The remove button is disabled while the parent is busy
 	//     (e.g. mid-execute) to avoid races between DELETE and intent.
+	//   - When `readonly` is true the component switches to a "receipts
+	//     used" view: all remove / dismiss buttons are hidden and the
+	//     heading is swapped for a past-tense label. The parent uses
+	//     this mode after a journal has been generated so the receipts
+	//     that were OCR'd cannot be deleted mid-conversation.
 
 	import CheckCircle2Icon from '@lucide/svelte/icons/check-circle-2';
 	import FileTextIcon from '@lucide/svelte/icons/file-text';
@@ -29,15 +34,25 @@
 		pending,
 		uploaded,
 		disabled = false,
+		readonly = false,
 		onremove,
 		ondismiss
 	}: {
 		pending: PendingUploadView[];
 		uploaded: UploadedFileView[];
 		disabled?: boolean;
+		// When true, the heading switches to "Receipts used" and every
+		// row's remove / dismiss button is hidden. The parent renders
+		// this mode once a journal has been generated so the receipts
+		// referenced by the assistant turn cannot be removed mid-thread.
+		readonly?: boolean;
 		onremove: (fileId: string) => void;
 		ondismiss: (localId: string) => void;
 	} = $props();
+
+	const headingLabel = $derived(
+		readonly ? m.journal_upload_files_used_heading() : m.journal_upload_files_heading()
+	);
 
 	function formatSize(bytes: number): string {
 		if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
@@ -51,7 +66,7 @@
 
 <section class="space-y-3 rounded-xl border bg-card p-4 shadow-sm">
 	<div class="flex items-center justify-between">
-		<h3 class="text-sm font-semibold">{m.journal_upload_files_heading()}</h3>
+		<h3 class="text-sm font-semibold">{headingLabel}</h3>
 		<span class="text-xs text-muted-foreground">
 			{m.journal_upload_file_count({ count: String(totalCount) })}
 		</span>
@@ -86,7 +101,7 @@
 								: (item.errorMessage ?? '')}
 						</p>
 					</div>
-					{#if item.status === 'error'}
+					{#if item.status === 'error' && !readonly}
 						<button
 							type="button"
 							class={cn(
@@ -113,18 +128,20 @@
 						<p class="truncate font-medium" title={file.filename}>{file.filename}</p>
 						<p class="text-xs text-muted-foreground">{formatSize(file.sizeBytes)}</p>
 					</div>
-					<button
-						type="button"
-						class={cn(
-							'inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors',
-							disabled ? 'cursor-not-allowed opacity-50' : 'hover:bg-muted hover:text-destructive'
-						)}
-						{disabled}
-						aria-label={m.journal_upload_remove()}
-						onclick={() => onremove(file.fileId)}
-					>
-						<Trash2Icon class="size-4" aria-hidden="true" />
-					</button>
+					{#if !readonly}
+						<button
+							type="button"
+							class={cn(
+								'inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors',
+								disabled ? 'cursor-not-allowed opacity-50' : 'hover:bg-muted hover:text-destructive'
+							)}
+							{disabled}
+							aria-label={m.journal_upload_remove()}
+							onclick={() => onremove(file.fileId)}
+						>
+							<Trash2Icon class="size-4" aria-hidden="true" />
+						</button>
+					{/if}
 				</li>
 			{/each}
 		</ul>

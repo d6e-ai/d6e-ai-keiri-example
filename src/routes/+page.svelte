@@ -454,39 +454,53 @@
 		<p class="text-sm text-muted-foreground">{m.journal_description()}</p>
 	</section>
 
-	<section class="space-y-4">
-		<h2 class="text-lg font-semibold">{m.journal_upload_heading()}</h2>
-		<ReceiptUploader onfiles={handleFiles} disabled={isExecuting} />
+	{#if !parseResult}
+		<section class="space-y-4">
+			<h2 class="text-lg font-semibold">{m.journal_upload_heading()}</h2>
+			<ReceiptUploader onfiles={handleFiles} disabled={isExecuting} />
 
-		<UploadedFileList
-			pending={pendingUploads}
-			uploaded={uploadedRefs}
-			disabled={isExecuting}
-			onremove={handleRemove}
-			ondismiss={handleDismissPending}
-		/>
+			<UploadedFileList
+				pending={pendingUploads}
+				uploaded={uploadedRefs}
+				disabled={isExecuting}
+				readonly={false}
+				onremove={handleRemove}
+				ondismiss={handleDismissPending}
+			/>
 
-		<div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-			<p class="text-xs text-muted-foreground">{m.journal_upload_run_hint()}</p>
-			<div class="flex items-center gap-3">
-				{#if executeBlockedHint}
-					<span class="text-xs text-muted-foreground">{executeBlockedHint}</span>
-				{/if}
-				<button
-					type="button"
-					class={cn(
-						'inline-flex items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm transition-colors',
-						canExecute ? 'hover:bg-primary/90' : 'cursor-not-allowed opacity-50'
-					)}
-					disabled={!canExecute}
-					onclick={handleExecute}
-				>
-					<PlayIcon class="size-4" aria-hidden="true" />
-					{m.journal_upload_run_button()}
-				</button>
+			<div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+				<p class="text-xs text-muted-foreground">{m.journal_upload_run_hint()}</p>
+				<div class="flex items-center gap-3">
+					{#if executeBlockedHint}
+						<span class="text-xs text-muted-foreground">{executeBlockedHint}</span>
+					{/if}
+					<button
+						type="button"
+						class={cn(
+							'inline-flex items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm transition-colors',
+							canExecute ? 'hover:bg-primary/90' : 'cursor-not-allowed opacity-50'
+						)}
+						disabled={!canExecute}
+						onclick={handleExecute}
+					>
+						<PlayIcon class="size-4" aria-hidden="true" />
+						{m.journal_upload_run_button()}
+					</button>
+				</div>
 			</div>
-		</div>
-	</section>
+		</section>
+	{:else}
+		<section class="space-y-4">
+			<UploadedFileList
+				pending={pendingUploads}
+				uploaded={uploadedRefs}
+				disabled={false}
+				readonly={true}
+				onremove={handleRemove}
+				ondismiss={handleDismissPending}
+			/>
+		</section>
+	{/if}
 
 	{#if isExecuting}
 		<div

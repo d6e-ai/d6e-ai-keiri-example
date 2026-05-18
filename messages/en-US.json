@@ -11,6 +11,7 @@
 	"journal_upload_drop_hint": "Drag and drop one or more images here, or choose files.",
 	"journal_upload_pick_file": "Choose Files",
 	"journal_upload_files_heading": "Uploaded receipts",
+	"journal_upload_files_used_heading": "Receipts used",
 	"journal_upload_files_empty": "No receipts added yet. Pick files from the area above.",
 	"journal_upload_file_count": "{count} files",
 	"journal_upload_uploading": "Uploading...",

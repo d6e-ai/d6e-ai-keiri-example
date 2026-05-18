@@ -11,6 +11,7 @@
 	"journal_upload_drop_hint": "画像を複数まとめてドラッグ&ドロップ、またはファイルを選択します。",
 	"journal_upload_pick_file": "ファイルを選択",
 	"journal_upload_files_heading": "アップロード済みの領収書",
+	"journal_upload_files_used_heading": "使用された領収書",
 	"journal_upload_files_empty": "まだ領収書が追加されていません。上のエリアからファイルを選択してください。",
 	"journal_upload_file_count": "{count} 件",
 	"journal_upload_uploading": "アップロード中...",
