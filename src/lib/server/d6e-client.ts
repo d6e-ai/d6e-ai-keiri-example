@@ -221,14 +221,17 @@ export async function uploadFile(
  * removal (DELETE /api/upload/[fileId]) and for best-effort cleanup
  * after a failed execute-by-intent run.
  *
- * Failures are logged but never throw so the caller can keep
- * propagating its primary error.
+ * Returns true when the upstream confirmed the deletion (or reported
+ * 404, meaning the file was already gone), false when the upstream
+ * rejected the request or the network round-trip failed. Failures
+ * are also logged so best-effort callers can simply ignore the
+ * boolean while user-facing callers can surface a useful error.
  */
 export async function deleteFile(
 	caller: string,
 	accessToken: string,
 	fileId: string
-): Promise<void> {
+): Promise<boolean> {
 	const apiUrl = getD6eUrl(caller);
 	const workspaceId = getD6eWorkspaceId(caller);
 
@@ -242,15 +245,18 @@ export async function deleteFile(
 			},
 			signal: AbortSignal.timeout(DELETE_TIMEOUT_MS)
 		});
-		if (!response.ok && response.status !== 404) {
-			const body = await readUpstreamBody(response);
-			console.error(
-				`[d6e-client] deleteFile failed (${caller}): status=${response.status} fileId=${fileId} body=${body.slice(0, 300)}`
-			);
+		if (response.ok || response.status === 404) {
+			return true;
 		}
+		const body = await readUpstreamBody(response);
+		console.error(
+			`[d6e-client] deleteFile failed (${caller}): status=${response.status} fileId=${fileId} body=${body.slice(0, 300)}`
+		);
+		return false;
 	} catch (err) {
 		const msg = err instanceof Error ? err.message : String(err);
 		console.error(`[d6e-client] deleteFile error (${caller}): fileId=${fileId} message=${msg}`);
+		return false;
 	}
 }
 

@@ -1,10 +1,11 @@
 <script lang="ts">
 	// Auth route layout (used by /auth/no-access etc.).
 	//
-	// Bypasses the main sidebar layout because the user may not be
-	// authenticated yet, so the sidebar (which expects locals.user)
-	// is not safe to render. We still import the global layout.css so
-	// the design tokens and Tailwind base styles are available.
+	// Renders a bare, centred container without the sidebar. The root
+	// +layout.svelte detects /auth/* paths and skips the sidebar
+	// wrapper for them, so this nested layout only contributes the
+	// max-width content well. We still import the global layout.css
+	// so the design tokens and Tailwind base styles are available.
 
 	import '../layout.css';
 
