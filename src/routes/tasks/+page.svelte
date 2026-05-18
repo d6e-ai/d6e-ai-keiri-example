@@ -56,7 +56,7 @@
 	const activePromise = $derived(activeStatus === 'pending' ? pendingPromise : completedPromise);
 
 	const activeDescription = $derived(
-		activeStatus === 'pending' ? m.tasks_pending_resume_hint() : m.tasks_description()
+		activeStatus === 'pending' ? m.tasks_description_pending() : m.tasks_description_completed()
 	);
 	const activeEmptyMessage = $derived(
 		activeStatus === 'pending' ? m.tasks_empty_pending() : m.tasks_empty()
