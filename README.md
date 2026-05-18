@@ -190,6 +190,33 @@ or parent folder later.
 - [`docs/llm-output-contract.md`](./docs/llm-output-contract.md) — JSON schema, scenarios, parse fallback
 - [`docs/migration-to-full-integration.md`](./docs/migration-to-full-integration.md) — roadmap toward the full d6e-auth/STF integration (C-case)
 
+## Agent Skills
+
+This repository doubles as a reusable Agent Skill package. Three
+[`skills/`](./skills/README.md) entries teach AI agents (Claude /
+Cursor / etc.) how to build their own d6e-connected frontends using
+this codebase as a reference:
+
+| Skill                                                                    | Concern                                                                                                                                                                  |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [`d6e-auth-integration`](./skills/d6e-auth-integration/SKILL.md)         | OAuth2 two-stage exchange (d6e-auth → b-button), session cookies, transparent refresh, workspace allow-list.                                                             |
+| [`d6e-workspace-api-client`](./skills/d6e-workspace-api-client/SKILL.md) | Bearer vs cookie header matrix, the `caller + accessToken + AbortSignal` wrapper convention in `src/lib/server/d6e-client.ts`, and the idempotent prompt-rule bootstrap. |
+| [`d6e-prompt-driven-ui`](./skills/d6e-prompt-driven-ui/SKILL.md)         | `kind`-discriminated JSON inside fenced code blocks, Zod parse with markdown fallback, XML-tag revision flows, scenario-append activation via the d6e chat UI.           |
+
+Install in your agent:
+
+```bash
+npx skills add https://github.com/d6e-ai/d6e-ai-keiri-example --skill d6e-auth-integration
+npx skills add https://github.com/d6e-ai/d6e-ai-keiri-example --skill d6e-workspace-api-client
+npx skills add https://github.com/d6e-ai/d6e-ai-keiri-example --skill d6e-prompt-driven-ui
+```
+
+These skills are auto-discovered by [skills.sh](https://skills.sh) as
+long as this repository carries the `agent-skills` GitHub topic.
+Repository maintainers: add the `agent-skills` topic via
+_Settings → Topics_ on GitHub to surface the skills at
+`https://www.skills.sh/d6e-ai/d6e-ai-keiri-example/<skill-name>`.
+
 ## Status & caveats
 
 - `/api/workflows/execute-by-intent` is internal to d6e and has no

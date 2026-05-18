@@ -10,8 +10,8 @@
 		"preview": "vite preview",
 		"prepare": "svelte-kit sync || echo ''",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
-		"format": "prettier --write \"src/**/*.{ts,js,mjs,svelte,json,md}\" \"scripts/**/*.{mjs,md}\" \"*.md\" \"*.json\"",
-		"format:check": "prettier --check \"src/**/*.{ts,js,mjs,svelte,json,md}\" \"scripts/**/*.{mjs,md}\" \"*.md\" \"*.json\"",
+		"format": "prettier --write \"src/**/*.{ts,js,mjs,svelte,json,md}\" \"scripts/**/*.{mjs,md}\" \"skills/**/*.md\" \"*.md\" \"*.json\"",
+		"format:check": "prettier --check \"src/**/*.{ts,js,mjs,svelte,json,md}\" \"scripts/**/*.{mjs,md}\" \"skills/**/*.md\" \"*.md\" \"*.json\"",
 		"init": "node --env-file=.env scripts/init-workspace.mjs"
 	},
 	"devDependencies": {

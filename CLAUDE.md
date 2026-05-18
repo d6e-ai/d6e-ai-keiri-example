@@ -154,3 +154,27 @@ the contract; the AI Journal page must never go blank. See
 For non-trivial changes write a plan under `.plans/` first. Use Plan mode
 in Cursor/Claude to discuss tradeoffs before editing. Once a PR is
 opened, keep the description in sync with what actually changed.
+
+## Agent Skills (`skills/`)
+
+This repo also publishes three reusable Agent Skills for AI agents
+building their own d6e-connected frontends:
+
+- [`skills/d6e-auth-integration/SKILL.md`](./skills/d6e-auth-integration/SKILL.md) — OAuth2 two-stage exchange + session cookies + hooks.
+- [`skills/d6e-workspace-api-client/SKILL.md`](./skills/d6e-workspace-api-client/SKILL.md) — Bearer/cookie header matrix, `caller + accessToken` wrapper convention, idempotent prompt-rule bootstrap.
+- [`skills/d6e-prompt-driven-ui/SKILL.md`](./skills/d6e-prompt-driven-ui/SKILL.md) — `kind`-discriminated JSON contracts, Zod parse with markdown fallback, XML-tag revision flow, scenario-append activation.
+
+Conventions when editing them:
+
+- Each `SKILL.md` has a YAML frontmatter (`name` + `description`) in
+  English. The `description` must include trigger phrases so
+  [skills.sh](https://skills.sh) and Cursor's `@skills` picker can
+  surface the skill from natural-language requests.
+- Skill bodies are English-first with Japanese trigger examples in
+  the `When to Use` list.
+- Skills cite the implementation by relative path
+  (e.g. `[\`src/lib/server/d6e-client.ts\`](../../src/lib/server/d6e-client.ts)`).
+  When you change a referenced module, update the citing skill in
+  the same PR.
+- `skills.sh` auto-discovers via the `agent-skills` GitHub topic. Do
+  not remove that topic from the repository settings.
