@@ -28,12 +28,13 @@
 //   - other 4xx/5xx: bubbled up from d6e's response.
 //
 // Cleanup policy:
-//   When execute-by-intent fails with a *hard* error (non-success, not a
-//   timeout and not an abort) and the request carried inputFileRefs, we
-//   best-effort DELETE those storage records so the workspace does not
-//   accumulate orphaned uploads. Timeouts deliberately leave the files
-//   in place because the workflow may still be running and consuming
-//   them (mirrors d6e-auth's SNS proxy behaviour).
+//   This handler does NOT delete inputFileRefs on failure. In the
+//   multi-file upload flow, the client uploads files independently
+//   into a user-visible queue before pressing "Generate journal", so
+//   the client still holds those fileIds and expects to retry against
+//   the same files. The queue owns the lifecycle: users remove files
+//   via DELETE /api/upload/{fileId}, which is the only path that
+//   should delete storage records.
 
 import { json } from '@sveltejs/kit';
 
@@ -48,7 +49,6 @@ import { parseJournalMessage } from '$lib/parse-journal';
 import {
 	createChatSession,
 	D6eClientError,
-	deleteFile,
 	executeByIntent,
 	getChatSessionById,
 	updateChatSession,
@@ -57,6 +57,7 @@ import {
 	type IntentResponse
 } from '$lib/server/d6e-client';
 import { getD6eWorkspaceId } from '$lib/server/env';
+import { requireAccessToken } from '$lib/server/session';
 
 import type { RequestHandler } from './$types';
 
@@ -102,12 +103,6 @@ function validatePersistAs(value: unknown): PersistKind | string {
 	return 'persistAs must be "journal" or "ask" when provided';
 }
 
-async function bestEffortCleanup(callerTag: string, refs: IntentInputFileRef[]): Promise<void> {
-	for (const ref of refs) {
-		await deleteFile(callerTag, ref.fileId);
-	}
-}
-
 // crypto.randomUUID is available in both Node 20+ and modern browsers,
 // and SvelteKit server handlers run on Node. Wrap it so callers can
 // stay synchronous and we only have one UUID source to swap if needed.
@@ -141,20 +136,29 @@ function buildAssistantUiMessage(text: string): ChatSessionMessage {
  */
 async function persistTurn(args: {
 	callerTag: string;
+	accessToken: string;
 	workspaceId: string;
 	userMessage: string;
 	assistantText: string;
 	chatSessionId: string | undefined;
 	persistAs: PersistKind;
 }): Promise<{ chatSessionId: string | undefined; persistError?: string }> {
-	const { callerTag, workspaceId, userMessage, assistantText, chatSessionId, persistAs } = args;
+	const {
+		callerTag,
+		accessToken,
+		workspaceId,
+		userMessage,
+		assistantText,
+		chatSessionId,
+		persistAs
+	} = args;
 
 	const userUiMessage = buildUserUiMessage(userMessage);
 	const assistantUiMessage = buildAssistantUiMessage(assistantText);
 
 	if (chatSessionId) {
 		try {
-			const existing = await getChatSessionById(callerTag, chatSessionId);
+			const existing = await getChatSessionById(callerTag, accessToken, chatSessionId);
 			const messages: ChatSessionMessage[] = [
 				...(Array.isArray(existing.messages) ? existing.messages : []),
 				userUiMessage,
@@ -185,7 +189,7 @@ async function persistTurn(args: {
 				}
 			}
 
-			await updateChatSession(callerTag, chatSessionId, patch);
+			await updateChatSession(callerTag, accessToken, chatSessionId, patch);
 			return { chatSessionId };
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err);
@@ -207,7 +211,7 @@ async function persistTurn(args: {
 	}
 
 	try {
-		const created = await createChatSession(callerTag, {
+		const created = await createChatSession(callerTag, accessToken, {
 			workspaceId,
 			title,
 			messages: [userUiMessage, assistantUiMessage]
@@ -222,8 +226,10 @@ async function persistTurn(args: {
 	}
 }
 
-export const POST: RequestHandler = async ({ request }) => {
+export const POST: RequestHandler = async (event) => {
 	const callerTag = '/api/intent';
+	const accessToken = requireAccessToken(event, callerTag);
+	const request = event.request;
 
 	let body: IntentRequestBody;
 	try {
@@ -261,6 +267,7 @@ export const POST: RequestHandler = async ({ request }) => {
 	try {
 		const upstream = await executeByIntent(
 			callerTag,
+			accessToken,
 			{ message: body.message, inputFileRefs },
 			{ signal: request.signal }
 		);
@@ -272,6 +279,7 @@ export const POST: RequestHandler = async ({ request }) => {
 		const workspaceId = getD6eWorkspaceId(callerTag);
 		const persistResult = await persistTurn({
 			callerTag,
+			accessToken,
 			workspaceId,
 			userMessage: body.message,
 			assistantText: upstream.message ?? '',
@@ -291,9 +299,6 @@ export const POST: RequestHandler = async ({ request }) => {
 		return json(response);
 	} catch (err) {
 		if (err instanceof D6eClientError) {
-			if (!err.timedOut && !err.aborted && inputFileRefs.length > 0) {
-				await bestEffortCleanup(callerTag, inputFileRefs);
-			}
 			return json(
 				{
 					error: err.message,
@@ -305,9 +310,6 @@ export const POST: RequestHandler = async ({ request }) => {
 		}
 		const msg = err instanceof Error ? err.message : String(err);
 		console.error(`[${callerTag}] Unexpected error: ${msg}`);
-		if (inputFileRefs.length > 0) {
-			await bestEffortCleanup(callerTag, inputFileRefs);
-		}
 		return json({ error: msg }, { status: 500 });
 	}
 };

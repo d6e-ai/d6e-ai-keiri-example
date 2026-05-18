@@ -4,7 +4,7 @@ This document captures the exact request/response shapes used by this
 app. They are derived from the d6e source as of the time this example was
 written; if d6e changes its API, the relevant files here must be updated.
 
-## 1. File upload — `/api/v1/workspaces/{workspaceId}/files`
+## 1. File upload — `/api/v1/workspaces/{workspaceId}/files/multipart`
 
 **Hosted by:** d6e Rust API server, exposed under
 `${D6E_BASE_URL}/api/v1/...`. In a managed d6e deployment a reverse
@@ -13,25 +13,22 @@ everything else to the SvelteKit frontend, so a single `D6E_BASE_URL`
 covers both surfaces.
 
 **Auth:** `Authorization: Bearer <access_token>` + `X-Workspace-ID: <UUID>`.
-The access token is obtained by `src/lib/server/d6e-token.ts` from
-d6e-auth — see section 4 below.
+The access token comes from `event.locals.accessToken`, which
+`hooks.server.ts` populates from the end user's `auth-access` cookie
+(see section 4 below).
 
-**Request body (JSON):**
-
-```json
-{
-	"filename": "receipt.jpg",
-	"content_type": "image/jpeg",
-	"content": "<base64 of the file bytes>"
-}
-```
+**Request:** `multipart/form-data` with one `file` field carrying the
+raw file bytes and one `metadata` field containing a JSON-encoded
+object (this app sends `{"source":"d6e-ai-keiri-example"}`).
 
 **Response (JSON):**
 
 ```json
 {
 	"id": "019bbac4-68a4-71d3-8928-8b32cabec841",
-	"filename": "receipt.jpg"
+	"filename": "receipt.jpg",
+	"content_type": "image/jpeg",
+	"size": 124300
 }
 ```
 
@@ -40,8 +37,11 @@ The `id` field is the Storage UUID that must be passed to
 
 **This app's wrapper:**
 [`src/routes/api/upload/+server.ts`](../src/routes/api/upload/+server.ts)
-turns a browser-sent `multipart/form-data` into the JSON above via
-[`uploadFile()`](../src/lib/server/d6e-client.ts).
+relays the browser's `multipart/form-data` via
+[`uploadFile()`](../src/lib/server/d6e-client.ts). When the user
+removes a queued file before pressing "Generate journal",
+[`DELETE /api/upload/{fileId}`](../src/routes/api/upload/%5BfileId%5D/+server.ts)
+forwards a DELETE to the same Rust endpoint to clean up the orphan.
 
 **Upstream reference:**
 [d6e `packages/frontend/src/routes/api/workspaces/[workspaceId]/files/upload/+server.ts`](https://github.com/d6e-ai/d6e/blob/main/packages/frontend/src/routes/api/workspaces/%5BworkspaceId%5D/files/upload/+server.ts)
@@ -149,27 +149,68 @@ the d6e frontend's admin UI for now.
 **Upstream reference:**
 [d6e `packages/frontend/src/routes/api/workspace-prompt-rules/+server.ts`](https://github.com/d6e-ai/d6e/blob/main/packages/frontend/src/routes/api/workspace-prompt-rules/+server.ts).
 
-## 4. Token refresh — `/api/v1/auth/token`
+## 4. End-user OAuth2 — two-stage token exchange
 
-**Hosted by:** the d6e frontend, exposed under
-`${D6E_BASE_URL}/api/v1/auth/token` (e.g.
-`https://b-button.d6e.ai/api/v1/auth/token`). The same `b-button`
-instance both issues and validates access tokens, which guarantees the
-`aud` claim always matches.
+**Hosted by:** d6e-auth (e.g. `https://www.d6e.ai`) **and** the per-app
+b-button instance (`${D6E_BASE_URL}`). Login happens at d6e-auth; the
+resulting refresh token is then re-minted at b-button so the resulting
+access_token has the audience b-button's own Bearer endpoints accept.
+Skipping this second exchange produces a 401 on every workspace /
+file / workflow call (audience-claim mismatch — d6e-auth signs tokens
+with `iss=d6e-auth`, which b-button rejects).
+
+This app implements the OAuth2 **Authorization Code** flow per end
+user. The flow lives in three SvelteKit routes:
+
+| Step                                | Endpoint                           |
+| ----------------------------------- | ---------------------------------- |
+| Start (state cookie + 302 to auth)  | `GET /auth/login`                  |
+| Callback (state verify + exchange)  | `GET /auth/callback`               |
+| Logout (local + upstream)           | `GET /auth/logout` (or POST form)  |
+| Membership reject                   | `GET /auth/no-access`              |
+
+### Stage 1 — d6e-auth (`${D6E_AUTH_URL}/api/v1/auth/token`)
+
+**Request body (JSON):**
+
+```json
+{
+	"grant_type": "authorization_code",
+	"code": "<value from /auth/callback>",
+	"client_id": "<D6E_AUTH_CLIENT_ID>",
+	"client_secret": "<D6E_AUTH_CLIENT_SECRET>",
+	"redirect_uri": "<D6E_AUTH_REDIRECT_URI>"
+}
+```
+
+The response shape is the standard OAuth2 token response
+(`access_token`, `refresh_token`, `token_type`, `expires_in`).
+**The `access_token` here is signed with `iss=d6e-auth` and cannot
+be used as a Bearer credential against `${D6E_BASE_URL}`.** This app
+discards it immediately and only keeps the `refresh_token`.
+
+### Stage 2 — b-button (`${D6E_BASE_URL}/api/v1/auth/token`)
 
 **Request body (JSON):**
 
 ```json
 {
 	"grant_type": "refresh_token",
-	"refresh_token": "<value of the auth-refresh cookie>"
+	"refresh_token": "<refresh_token from stage 1>"
 }
 ```
 
-No `client_id` / `client_secret` is required — the b-button instance
-already knows which OAuth client backs it.
+No `client_id` / `client_secret` is required against b-button: the
+instance already knows which OAuth client backs it. b-button returns
+a fresh token pair signed for its own audience, and **only this pair
+is written to the user's cookies**.
 
-**Response (JSON):**
+All subsequent refreshes (triggered by `loadSession()` when the
+access token is within 60 seconds of expiry) use this same b-button
+endpoint, so once the user is logged in we never touch d6e-auth
+again until the next interactive login.
+
+**Response shape (both stages):**
 
 ```json
 {
@@ -182,19 +223,61 @@ already knows which OAuth client backs it.
 
 Notes:
 
-- The response always rotates `refresh_token`. The example app keeps the
-  refresh token in `.env` (`D6E_REFRESH_TOKEN`) and does **not**
-  persist rotated values — this is acceptable because the original
-  refresh token stays valid until its 30-day expiry. For longer-lived
-  deployments, persist the new refresh token after each refresh.
-- 4xx responses indicate the refresh token is genuinely rejected
-  (revoked, malformed, or signed with a key d6e-auth no longer knows
-  about). The operator must copy a fresh `auth-refresh` cookie value
-  into `.env` and restart the server.
-- 5xx responses are transient and should be retried after backoff.
+- Both endpoints rotate `refresh_token` on every call. The app stores
+  the rotated value from stage 2 in the user's `auth-refresh` cookie
+  (HTTP-only, SameSite=Lax, 30-day cap), so the next refresh
+  round-trip always uses the freshest b-button-issued token.
+- 4xx responses cause the user to be bounced back to `/auth/login` so
+  they can try again with a fresh authorization code.
+- 5xx responses are transient and surface as a 502 client error.
 
-**This app's wrapper:**
-[`src/lib/server/d6e-token.ts`](../src/lib/server/d6e-token.ts).
+**This app's wrappers:**
+[`src/lib/server/oauth.ts`](../src/lib/server/oauth.ts) (token
+endpoints — `exchangeAuthorizationCode()` for stage 1,
+`refreshAccessTokenViaBaseUrl()` for stage 2),
+[`src/lib/server/session.ts`](../src/lib/server/session.ts) (cookie
+store and exp-based refresh, always via b-button), and
+[`src/hooks.server.ts`](../src/hooks.server.ts) (per-request session
+loading + unauthenticated redirect).
+
+### Logout — local cookies + d6e-auth session
+
+`/auth/logout` does **two** things in a single hop:
+
+1. Deletes the four local cookies (`auth-access`, `auth-refresh`,
+   `auth-user`, `auth-oauth-state`).
+2. 303-redirects the browser to
+   `${D6E_AUTH_URL}/auth/logout?redirect_uri=${origin}/auth/login`,
+   which deletes d6e-auth's own session row + cookie before sending
+   the user back to this app's `/auth/login`.
+
+The upstream hop is required because d6e-auth holds its own session
+cookie on `${D6E_AUTH_URL}`. Without step 2, hitting `/auth/login`
+immediately after a logout would just call back to
+`${D6E_AUTH_URL}/auth/login` with the still-live session, d6e-auth
+would silently issue a fresh `code`, this app would run the two-stage
+exchange again, and the user would end up logged in within ~200 ms
+of clicking "logout".
+
+`d6e-auth`'s logout endpoint reference:
+[d6e-auth `src/routes/auth/logout/+server.ts`](https://github.com/d6e-ai/d6e-auth/blob/main/src/routes/auth/logout/+server.ts).
+
+### Workspace allow-list
+
+After a successful code-exchange, `/auth/callback` calls
+`GET ${D6E_BASE_URL}/api/v1/workspaces/${D6E_WORKSPACE_ID}` to confirm
+the user is a member of the configured workspace. Non-members are
+forwarded to `/auth/no-access` and never see the rest of the app. See
+[`verifyWorkspaceMembership()`](../src/lib/server/d6e-client.ts).
+
+### Developer-side init token
+
+`scripts/init-workspace.mjs` still uses a fixed long-lived refresh
+token, but under a renamed env var (`D6E_INIT_REFRESH_TOKEN`) so that
+it cannot be confused with the user-facing `auth-refresh` cookie. The
+script targets `${D6E_BASE_URL}/api/v1/auth/token` directly (the
+b-button instance) because the prompt-rule POST requires a
+cookie-authenticated admin session on the same origin.
 
 ## 5. Chat session persistence — `/api/chat-sessions`
 
@@ -328,15 +411,22 @@ pastes the activation file again.
 
 ## Auth model summary
 
-| Endpoint                                | Header / Body                          | Source variable                          |
-| --------------------------------------- | -------------------------------------- | ---------------------------------------- |
-| `POST /api/v1/workspaces/{id}/files`    | `Authorization: Bearer <access_token>` | `getAccessToken()` (cached)              |
-| `POST /api/workflows/execute-by-intent` | `Authorization: Bearer <access_token>` | `getAccessToken()` (cached)              |
-| `POST /api/workspace-prompt-rules`      | `Cookie: auth-token=<access_token>`    | `getAccessToken()` at startup of init    |
-| `/api/chat-sessions[*]`                 | `Cookie: auth-token=<access_token>`    | `getAccessToken()` (cached)              |
-| `POST /api/v1/auth/token`               | JSON `refresh_token` only              | `D6E_REFRESH_TOKEN`                      |
+| Endpoint                                              | Header / Body                          | Source                                                                  |
+| ----------------------------------------------------- | -------------------------------------- | ----------------------------------------------------------------------- |
+| `POST /api/v1/workspaces/{id}/files/multipart`        | `Authorization: Bearer <access_token>` | `event.locals.accessToken` (auth-access cookie via hooks.server.ts)     |
+| `DELETE /api/v1/workspaces/{id}/files/{fileId}`       | `Authorization: Bearer <access_token>` | same as above                                                           |
+| `GET /api/v1/workspaces/{id}`                         | `Authorization: Bearer <access_token>` | same as above (only called from `/auth/callback`)                       |
+| `POST /api/workflows/execute-by-intent`               | `Authorization: Bearer <access_token>` | same as above                                                           |
+| `/api/chat-sessions[*]`                               | `Cookie: auth-token=<access_token>`    | same as above (re-emitted as a server-to-server cookie)                 |
+| `POST ${D6E_AUTH_URL}/api/v1/auth/token` (user, stage 1) | JSON `code`                            | OAuth2 authorization code received by `/auth/callback`                  |
+| `POST ${D6E_BASE_URL}/api/v1/auth/token` (user, stage 2 / refresh) | JSON `refresh_token`         | rotated `auth-refresh` cookie value (or stage 1 output on login)        |
+| `POST ${D6E_BASE_URL}/api/v1/auth/token` (init)       | JSON `refresh_token`                   | `D6E_INIT_REFRESH_TOKEN` (admin-only, never used by the user flow)      |
+| `POST /api/workspace-prompt-rules`                    | `Cookie: auth-token=<access_token>`    | access token issued by the init refresh above                           |
 
 Bearer headers and `auth-token` cookies carry the same JWT — only the
-transport differs. The app obtains that JWT exactly once per ~1 hour by
-exchanging the long-lived refresh token, so operators never have to
-paste short-lived tokens into `.env`.
+transport differs. The app never persists the JWT server-side; every
+request reads the user's cookie via `hooks.server.ts`, which
+transparently refreshes it via `${D6E_BASE_URL}/api/v1/auth/token` when
+the JWT's `exp` is within 60 seconds. Refreshing against b-button
+(not d6e-auth) is intentional — only b-button-issued access tokens
+are accepted by the Rust API.

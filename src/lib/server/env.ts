@@ -1,20 +1,29 @@
 // Server-only environment variable accessors.
 //
-// Centralises every D6E_* variable behind small helpers so that:
-//   1. The variables are validated at the point of first use, not at
-//      module load time (so `npm run build` and `npm run check` still
-//      work without a populated .env file).
-//   2. Error messages clearly identify which variable was missing and
-//      which caller was looking for it (per the project's error-handling
-//      guidelines).
+// Purpose:
+//   Centralise every D6E_* / D6E_AUTH_* variable behind small helpers so
+//   the variables are validated at the point of first use (not at module
+//   load time) and error messages clearly identify which variable was
+//   missing and which caller was asking for it.
 //
-// Access tokens are intentionally NOT exposed here. They are obtained
-// through src/lib/server/d6e-token.ts which exchanges the long-lived
-// refresh token below for a short-lived access token via the d6e
-// frontend's token endpoint.
+// Main specifications:
+//   - getD6eUrl(): base URL of the b-button d6e instance hosting file
+//     storage, execute-by-intent, chat-sessions, etc.
+//   - getD6eWorkspaceId(): UUID of the workspace this app operates on.
+//   - getD6eAuthUrl(): base URL of the d6e-auth service that issues
+//     OAuth2 authorization codes and JWT access tokens.
+//   - getD6eAuthClientId() / getD6eAuthClientSecret(): credentials of
+//     the registered_client row that maps this app to d6e-auth.
+//   - getD6eAuthRedirectUri(): callback URL registered with d6e-auth's
+//     registered_client.redirectUris array.
 //
-// Only $env/dynamic/private is used so that nothing here can be
-// inadvertently bundled into the client.
+// Limitations:
+//   - Access tokens are NOT exposed here. They are obtained via the
+//     server-side OAuth2 flow in src/lib/server/oauth.ts and stored
+//     in HTTP-only cookies; route handlers read them through
+//     event.locals.accessToken populated by hooks.server.ts.
+//   - Only $env/dynamic/private is used so that nothing here can be
+//     bundled into the client.
 
 import { env } from '$env/dynamic/private';
 
@@ -28,18 +37,9 @@ function requireEnv(name: string, caller: string): string {
 	return value;
 }
 
-// Base URL of the d6e instance.
-//
-// Managed deployments (e.g. https://b-button.d6e.ai) expose both the
-// Rust API (/api/v1/...) and the SvelteKit frontend (/api/workflows/...,
-// /api/chat-sessions, /api/v1/auth/token, /api/workspace-prompt-rules)
-// on the same origin via a reverse proxy that routes by path. This
-// example app targets that same-origin deployment shape exclusively, so
-// a single base URL is sufficient.
-//
-// If you ever need to point the Rust API and the SvelteKit frontend at
-// different hosts, reintroduce a dedicated accessor here and update the
-// callers in src/lib/server/d6e-client.ts.
+// Base URL of the d6e instance that hosts the Rust API (file storage,
+// workspaces, workflows) and the SvelteKit frontend (chat-sessions,
+// workspace-prompt-rules) on the same origin.
 export function getD6eUrl(caller: string): string {
 	return requireEnv('D6E_BASE_URL', caller).replace(/\/+$/, '');
 }
@@ -53,6 +53,29 @@ export function getD6eWorkspaceId(caller: string): string {
 	return value;
 }
 
-export function getD6eRefreshToken(caller: string): string {
-	return requireEnv('D6E_REFRESH_TOKEN', caller);
+// Base URL of the d6e-auth service (e.g. https://www.d6e.ai). It hosts
+// the OAuth2 authorize page (/auth/login) and the token endpoint
+// (/api/v1/auth/token) used to exchange authorization codes for JWTs.
+export function getD6eAuthUrl(caller: string): string {
+	return requireEnv('D6E_AUTH_URL', caller).replace(/\/+$/, '');
+}
+
+// Client ID of the registered_client row that represents this app on
+// d6e-auth. The d6e-auth admin must create this row and add the
+// callback URL to its redirectUris array before login can succeed.
+export function getD6eAuthClientId(caller: string): string {
+	return requireEnv('D6E_AUTH_CLIENT_ID', caller);
+}
+
+// Client secret paired with D6E_AUTH_CLIENT_ID. Never exposed to the
+// browser; only used server-side when POSTing to the token endpoint.
+export function getD6eAuthClientSecret(caller: string): string {
+	return requireEnv('D6E_AUTH_CLIENT_SECRET', caller);
+}
+
+// Callback URL registered with d6e-auth. Must match exactly one of the
+// strings stored in registered_client.redirectUris, otherwise d6e-auth
+// will reject the authorize request with redirect_uri mismatch.
+export function getD6eAuthRedirectUri(caller: string): string {
+	return requireEnv('D6E_AUTH_REDIRECT_URI', caller);
 }

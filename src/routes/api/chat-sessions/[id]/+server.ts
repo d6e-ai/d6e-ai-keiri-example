@@ -24,6 +24,7 @@ import {
 	updateChatSession,
 	type ChatSessionMessage
 } from '$lib/server/d6e-client';
+import { requireAccessToken } from '$lib/server/session';
 
 import type { RequestHandler } from './$types';
 
@@ -81,28 +82,30 @@ function handleClientError(method: string, sessionId: string, err: unknown) {
 	return json({ error: msg }, { status: 500 });
 }
 
-export const GET: RequestHandler = async ({ params }) => {
-	const sessionId = params.id ?? '';
+export const GET: RequestHandler = async (event) => {
+	const accessToken = requireAccessToken(event, `${CALLER_TAG_BASE} GET`);
+	const sessionId = event.params.id ?? '';
 	if (!sessionId) {
 		return json({ error: 'Missing session id' }, { status: 400 });
 	}
 	try {
-		const row = await getChatSessionById(`${CALLER_TAG_BASE} GET`, sessionId);
+		const row = await getChatSessionById(`${CALLER_TAG_BASE} GET`, accessToken, sessionId);
 		return json(row);
 	} catch (err) {
 		return handleClientError('GET', sessionId, err);
 	}
 };
 
-export const PATCH: RequestHandler = async ({ params, request }) => {
-	const sessionId = params.id ?? '';
+export const PATCH: RequestHandler = async (event) => {
+	const accessToken = requireAccessToken(event, `${CALLER_TAG_BASE} PATCH`);
+	const sessionId = event.params.id ?? '';
 	if (!sessionId) {
 		return json({ error: 'Missing session id' }, { status: 400 });
 	}
 
 	let raw: PatchChatSessionRequestBody;
 	try {
-		raw = (await request.json()) as PatchChatSessionRequestBody;
+		raw = (await event.request.json()) as PatchChatSessionRequestBody;
 	} catch {
 		return json({ error: 'Request body must be valid JSON' }, { status: 400 });
 	}
@@ -113,20 +116,21 @@ export const PATCH: RequestHandler = async ({ params, request }) => {
 	}
 
 	try {
-		const row = await updateChatSession(`${CALLER_TAG_BASE} PATCH`, sessionId, parsed);
+		const row = await updateChatSession(`${CALLER_TAG_BASE} PATCH`, accessToken, sessionId, parsed);
 		return json(row);
 	} catch (err) {
 		return handleClientError('PATCH', sessionId, err);
 	}
 };
 
-export const DELETE: RequestHandler = async ({ params }) => {
-	const sessionId = params.id ?? '';
+export const DELETE: RequestHandler = async (event) => {
+	const accessToken = requireAccessToken(event, `${CALLER_TAG_BASE} DELETE`);
+	const sessionId = event.params.id ?? '';
 	if (!sessionId) {
 		return json({ error: 'Missing session id' }, { status: 400 });
 	}
 	try {
-		await deleteChatSession(`${CALLER_TAG_BASE} DELETE`, sessionId);
+		await deleteChatSession(`${CALLER_TAG_BASE} DELETE`, accessToken, sessionId);
 		return json({ success: true });
 	} catch (err) {
 		return handleClientError('DELETE', sessionId, err);

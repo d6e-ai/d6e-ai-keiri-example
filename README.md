@@ -6,23 +6,39 @@ frontend on top of the [d6e](https://github.com/d6e-ai/d6e) platform's
 
 ## What this app does
 
-The user uploads a receipt image, the AI generates a freee-compatible
-journal entry, and the user revises it with free-form Japanese until it
-looks right. There is no real accounting backend — this repository exists
-to show how to wire up d6e for a single-purpose vertical app.
+The user signs in with their own d6e-auth account, uploads one or more
+receipt images, presses "Generate journal", and the AI produces a
+freee-compatible journal entry. The user revises it with free-form
+Japanese until it looks right. There is no real accounting backend —
+this repository exists to show how to wire up d6e for a single-purpose
+vertical app, including the OAuth2 login flow.
 
 ````mermaid
 sequenceDiagram
     participant User as Browser
     participant App as d6e-ai-keiri-example (this app)
+    participant Auth as d6e-auth (www.d6e.ai)
     participant Files as d6e API (files)
     participant Intent as d6e SvelteKit (/api/workflows/execute-by-intent)
     participant LLM as LLM via MCP
 
-    User->>App: Upload receipt image
-    App->>Files: POST /api/v1/workspaces/{wsId}/files
-    Files-->>App: { id: fileId }
-    App->>Intent: POST execute-by-intent (message, inputFileRefs)
+    User->>App: GET / (no cookie)
+    App-->>User: 302 /auth/login
+    User->>Auth: log in with email+password or Google
+    Auth-->>App: redirect ?code=...&state=...
+    App->>Auth: POST /api/v1/auth/token (authorization_code)
+    Auth-->>App: access_token (iss=d6e-auth) + refresh_token
+    Note over App,Files: stage 2 — re-mint at b-button so the access_token<br/>has the audience the Rust API expects
+    App->>Files: POST /api/v1/auth/token (refresh_token)
+    Files-->>App: access_token (iss=b-button) + refresh_token<br/>(written to HTTP-only cookies)
+    App->>Files: GET /api/v1/workspaces/{wsId} (membership check)
+    Files-->>App: 200 OK (or 403 -> /auth/no-access)
+
+    User->>App: Pick N receipts
+    App->>Files: POST /api/v1/workspaces/{wsId}/files/multipart (xN)
+    Files-->>App: { id: fileId } (xN)
+    User->>App: Press "Generate journal"
+    App->>Intent: POST execute-by-intent (message, inputFileRefs[])
     Intent->>LLM: generateText with MCP tools
     LLM-->>Intent: ```json {"kind":"journal","entries":[...]} ```
     Intent-->>App: IntentResponse
@@ -74,13 +90,17 @@ npm install
 
 ### 2. Configure environment variables
 
-Copy `.env.example` to `.env` and fill in the three values:
+Copy `.env.example` to `.env` and fill in the values:
 
-| Variable            | Used by                                                                                       | How to obtain                                                           |
-| ------------------- | --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| `D6E_BASE_URL`      | `/api/upload`, `/api/intent`, `/api/chat-sessions`, `npm run init`, server-side token refresh | Base URL of the d6e instance (e.g. `https://b-button.d6e.ai`)           |
-| `D6E_WORKSPACE_ID`  | all calls                                                                                     | UUID of the d6e workspace this app should operate on                    |
-| `D6E_REFRESH_TOKEN` | server-side token refresh                                                                     | Long-lived `auth-refresh` cookie value from a logged-in browser session |
+| Variable                 | Used by                                            | How to obtain                                                                                         |
+| ------------------------ | -------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `D6E_BASE_URL`           | `/api/upload`, `/api/intent`, `/api/chat-sessions` | Base URL of the d6e instance (e.g. `https://b-button.d6e.ai`)                                         |
+| `D6E_WORKSPACE_ID`       | all calls                                          | UUID of the d6e workspace this app should operate on                                                  |
+| `D6E_AUTH_URL`           | `/auth/login`, `/auth/callback`, refresh           | Base URL of the d6e-auth instance (e.g. `https://www.d6e.ai`)                                         |
+| `D6E_AUTH_CLIENT_ID`     | server-side OAuth                                  | `client_id` of the `registered_client` row that maps this app to d6e-auth                             |
+| `D6E_AUTH_CLIENT_SECRET` | server-side OAuth                                  | `client_secret` paired with `D6E_AUTH_CLIENT_ID`                                                      |
+| `D6E_AUTH_REDIRECT_URI`  | `/auth/login`, `/auth/callback`                    | Callback URL exposed by this app (e.g. `http://localhost:5173/auth/callback`). Must be pre-registered |
+| `D6E_INIT_REFRESH_TOKEN` | `npm run init` only                                | Long-lived `auth-refresh` cookie value from a workspace-ADMIN browser session on `D6E_BASE_URL`       |
 
 > Managed d6e deployments expose the Rust API (`/api/v1/...`) and the
 > SvelteKit frontend (everything else) on the same origin via a reverse
@@ -89,15 +109,26 @@ Copy `.env.example` to `.env` and fill in the three values:
 > dedicated accessor in `src/lib/server/env.ts` and update the callers
 > in `src/lib/server/d6e-client.ts`.
 
-> The `auth-refresh` cookie is `HttpOnly`, so you'll need to copy it
-> from the browser dev tools (`Application` -> `Cookies`) after logging
-> in to the d6e frontend. The cookie is valid for 30 days; this app
-> exchanges it for a fresh 1-hour access token via
-> `${D6E_BASE_URL}/api/v1/auth/token` (no `client_id` /
-> `client_secret` required) so you never need to paste short-lived
-> JWTs into `.env`. Refresh happens against the same `b-button` instance
-> that validates access tokens, which avoids audience-claim mismatch
-> errors that the central `d6e-auth` endpoint would otherwise produce.
+> **Before logins work**, the d6e-auth administrator must:
+>
+> 1. Create a `registered_client` row for this app on d6e-auth.
+> 2. Add the callback URL of every environment (e.g.
+>    `http://localhost:5173/auth/callback` for dev,
+>    `https://<your-deploy>.vercel.app/auth/callback` for prod) to
+>    that row's `redirect_uris` array.
+> 3. Hand the resulting `client_id` / `client_secret` to operators of
+>    this app so they can populate `.env`.
+
+> Every end user authenticates with their own d6e-auth account. Their
+> JWT access token is stored in an HTTP-only `auth-access` cookie and
+> refreshed transparently via the `auth-refresh` cookie. When a user
+> tries to sign in but is not a member of `D6E_WORKSPACE_ID`, the
+> server returns them to `/auth/no-access` with a message asking them
+> to contact their workspace administrator.
+
+> `D6E_INIT_REFRESH_TOKEN` is only used by the developer-side
+> `npm run init` bootstrap (see step 3); the end-user OAuth flow does
+> not read it.
 
 ### 3. Bootstrap the workspace (one-time)
 
@@ -164,18 +195,22 @@ or parent folder later.
 - `/api/workflows/execute-by-intent` is internal to d6e and has no
   stability guarantee. If the upstream contract changes, this app will
   need to follow.
-- This example uses a single shared workspace, a single OAuth client,
-  and a single user's refresh token. Per-user authentication is
-  intentionally out of scope; see `docs/migration-to-full-integration.md`
-  for the multi-user roadmap.
-- The access token cache lives in Node process memory. Serverless cold
-  starts will perform one refresh round-trip (~200 ms) per cold
-  invocation. For higher-traffic deployments, persist the rotated
-  refresh token returned by `/api/v1/auth/token` instead of keeping
-  `D6E_REFRESH_TOKEN` static.
+- This example uses a single shared workspace per deployment. Every
+  user must be a member of `D6E_WORKSPACE_ID`; non-members are blocked
+  at `/auth/no-access` after login.
+- Tokens live only in the user's `auth-access` / `auth-refresh`
+  cookies. There is no persistent server-side session store; cookies
+  are HTTP-only and rotated via the b-button instance's
+  `${D6E_BASE_URL}/api/v1/auth/token` endpoint when they are about to
+  expire. d6e-auth is only touched during the initial interactive
+  login at `/auth/callback`; after the two-stage exchange every
+  subsequent refresh stays on the same b-button instance so the
+  resulting access_token retains the audience the Rust API requires.
 - The journal table is read-only. Revisions happen by sending a
   natural-language correction back to the LLM (see
-  `docs/llm-output-contract.md`).
+  `docs/llm-output-contract.md`). Files cannot be added or removed
+  mid-revision; remove receipts from the queue before pressing
+  "Generate journal" if you want to retry with a different set.
 
 ## License
 

@@ -1,31 +1,39 @@
-// POST /api/upload — server-side proxy that uploads a single receipt image
-// to d6e's Storage API via multipart/form-data and returns the file
-// reference shape that execute-by-intent expects in inputFileRefs[].
+// POST /api/upload -- server-side proxy that uploads a single receipt
+// image to d6e's Storage API.
 //
-// The browser POSTs multipart/form-data with one "file" field. The buffer
-// is forwarded to d6e's /api/v1/workspaces/{wsId}/files/multipart endpoint
-// without base64 expansion (saves ~33% bandwidth vs. JSON+base64 upload).
+// Purpose:
+//   The browser POSTs multipart/form-data with one "file" field. The
+//   buffer is forwarded to d6e's /api/v1/workspaces/{wsId}/files/multipart
+//   endpoint without base64 expansion. The response intentionally mirrors
+//   IntentInputFileRef so the caller can pass it through to /api/intent
+//   verbatim.
 //
-// The response intentionally mirrors IntentInputFileRef so the caller can
-// pass it through to /api/intent verbatim.
+// Main specifications:
+//   - Authenticated via event.locals.accessToken (populated by
+//     hooks.server.ts from the auth-access cookie).
+//   - Single file per request; the multi-file UI calls this endpoint in
+//     parallel for each picked file.
+//   - Max file size: 10 MB.
 
 import { json } from '@sveltejs/kit';
 
 import { D6eClientError, uploadFile } from '$lib/server/d6e-client';
+import { requireAccessToken } from '$lib/server/session';
 
 import type { RequestHandler } from './$types';
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
+const CALLER_TAG = '/api/upload';
 
-export const POST: RequestHandler = async ({ request }) => {
-	const callerTag = '/api/upload';
+export const POST: RequestHandler = async (event) => {
+	const accessToken = requireAccessToken(event, CALLER_TAG);
 
 	let form: FormData;
 	try {
-		form = await request.formData();
+		form = await event.request.formData();
 	} catch (err) {
 		const msg = err instanceof Error ? err.message : String(err);
-		console.error(`[${callerTag}] Failed to parse multipart body: ${msg}`);
+		console.error(`[${CALLER_TAG}] Failed to parse multipart body: ${msg}`);
 		return json({ error: 'Request body must be multipart/form-data' }, { status: 400 });
 	}
 
@@ -50,11 +58,11 @@ export const POST: RequestHandler = async ({ request }) => {
 	const contentType = file.type || 'application/octet-stream';
 
 	try {
-		const uploaded = await uploadFile(callerTag, {
+		const uploaded = await uploadFile(CALLER_TAG, accessToken, {
 			filename,
 			contentType,
 			content: buffer,
-			signal: request.signal
+			signal: event.request.signal
 		});
 		return json({
 			fileId: uploaded.id,
@@ -67,7 +75,7 @@ export const POST: RequestHandler = async ({ request }) => {
 			return json({ error: err.message }, { status: err.status });
 		}
 		const msg = err instanceof Error ? err.message : String(err);
-		console.error(`[${callerTag}] Unexpected error: ${msg}`);
+		console.error(`[${CALLER_TAG}] Unexpected error: ${msg}`);
 		return json({ error: msg }, { status: 500 });
 	}
 };

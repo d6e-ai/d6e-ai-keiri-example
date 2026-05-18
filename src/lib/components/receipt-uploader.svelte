@@ -1,8 +1,17 @@
 <script lang="ts">
-	// Drag & drop / file picker for receipt images. Emits a single File
-	// through the `onfile` callback so the parent page owns the upload
-	// pipeline (POST /api/upload -> /api/intent). The component itself
-	// is stateless beyond hover styling.
+	// Drag & drop / file picker for receipt images.
+	//
+	// Purpose:
+	//   Hand back any number of File objects via the onfiles callback so
+	//   the parent page can stream them into /api/upload in parallel.
+	//   The component itself is stateless beyond hover styling and does
+	//   no upload work directly.
+	//
+	// Main specifications:
+	//   - <input type="file" multiple> accepts images and PDFs.
+	//   - Drag & drop forwards every File on event.dataTransfer.files.
+	//   - The "disabled" prop dampens UI affordances when the parent
+	//     is busy (e.g. while /api/intent is running).
 
 	import { UploadCloudIcon } from '@lucide/svelte';
 
@@ -10,32 +19,38 @@
 	import { cn } from '$lib/utils';
 
 	let {
-		onfile,
+		onfiles,
 		disabled = false
 	}: {
-		onfile: (file: File) => void;
+		onfiles: (files: File[]) => void;
 		disabled?: boolean;
 	} = $props();
 
 	let isDragging = $state(false);
 	let inputEl: HTMLInputElement | undefined = $state();
 
-	function emit(file: File | null | undefined): void {
-		if (disabled || !file) return;
-		onfile(file);
+	function emit(files: FileList | File[] | null | undefined): void {
+		if (disabled || !files) return;
+		const arr: File[] = [];
+		for (const f of Array.from(files)) {
+			if (f instanceof File && f.size > 0) {
+				arr.push(f);
+			}
+		}
+		if (arr.length === 0) return;
+		onfiles(arr);
 	}
 
 	function onInputChange(event: Event): void {
 		const target = event.currentTarget as HTMLInputElement;
-		emit(target.files?.[0]);
+		emit(target.files);
 		target.value = '';
 	}
 
 	function onDrop(event: DragEvent): void {
 		event.preventDefault();
 		isDragging = false;
-		const file = event.dataTransfer?.files?.[0];
-		emit(file);
+		emit(event.dataTransfer?.files);
 	}
 
 	function onDragOver(event: DragEvent): void {
@@ -91,6 +106,7 @@
 	<input
 		bind:this={inputEl}
 		type="file"
+		multiple
 		accept="image/*,application/pdf"
 		class="hidden"
 		onchange={onInputChange}

@@ -19,14 +19,19 @@
 
 import type { TasksFetchResult } from '$lib/journal-task';
 import { fetchChatSessionsForCaller } from '$lib/server/d6e-client';
+import { requireAccessToken } from '$lib/server/session';
 
 import type { PageServerLoad } from './$types';
 
 const CALLER_TAG = '/+page.server.ts (pending)';
 
-export const load: PageServerLoad = async () => {
+export const load: PageServerLoad = async (event) => {
+	const accessToken = requireAccessToken(event, CALLER_TAG);
 	// Kick off the network call but do NOT await it; SvelteKit will
 	// stream the resolved value to the browser when it lands.
-	const pendingTasks$: Promise<TasksFetchResult> = fetchChatSessionsForCaller(CALLER_TAG);
+	const pendingTasks$: Promise<TasksFetchResult> = fetchChatSessionsForCaller(
+		CALLER_TAG,
+		accessToken
+	);
 	return { pendingTasks$ };
 };

@@ -65,24 +65,51 @@ docs/
 
 ## Environment variables
 
-See `.env.example`. The runtime never reads a short-lived access token
-directly — it stores a long-lived refresh token (`D6E_REFRESH_TOKEN`)
-and exchanges it for an access token by POSTing to
-`${D6E_BASE_URL}/api/v1/auth/token` whenever a request needs one
-(`src/lib/server/d6e-token.ts`). The same module is reused by
-`scripts/init-workspace.mjs`, which stamps the freshly-issued access
-token into the `Cookie: auth-token=...` header required by
-`/api/workspace-prompt-rules`.
+See `.env.example`. The app implements a full OAuth2 Authorization
+Code flow against `D6E_AUTH_URL` (e.g. `https://www.d6e.ai`) with a
+mandatory **two-stage token exchange**:
 
-No `D6E_AUTH_CLIENT_ID` / `D6E_AUTH_CLIENT_SECRET` are needed: the
-`b-button` instance already knows which OAuth client backs it, and
-issues tokens whose `aud` claim matches the same instance that
-validates them.
+1. `/auth/callback` exchanges the `code` at d6e-auth — receives an
+   `access_token` signed with `iss=d6e-auth` plus a `refresh_token`.
+2. The `refresh_token` is immediately re-presented to
+   `${D6E_BASE_URL}/api/v1/auth/token` (the b-button instance), which
+   returns a fresh pair signed for **its own** audience. Only this
+   second pair is written to cookies.
+
+Skipping stage 2 produces a `401` on every workspace / file / workflow
+call because b-button rejects access tokens with `iss=d6e-auth`. This
+mirrors how `scripts/init-workspace.mjs` upgrades the admin
+`D6E_INIT_REFRESH_TOKEN` before talking to the b-button API.
+
+Required env vars:
+
+- `D6E_BASE_URL`, `D6E_WORKSPACE_ID` — the d6e b-button instance and
+  workspace this app targets.
+- `D6E_AUTH_URL`, `D6E_AUTH_CLIENT_ID`, `D6E_AUTH_CLIENT_SECRET`,
+  `D6E_AUTH_REDIRECT_URI` — d6e-auth client credentials. The
+  `registered_client.redirectUris` array on d6e-auth must include
+  `D6E_AUTH_REDIRECT_URI` exactly before logins work.
+- `D6E_INIT_REFRESH_TOKEN` — admin-only refresh token used **only** by
+  `scripts/init-workspace.mjs` to POST the workspace prompt rule.
+  Separate from the end-user `auth-refresh` cookie.
+
+Per-request token flow:
+
+1. `src/hooks.server.ts` reads the `auth-access` cookie and exposes
+   it as `event.locals.accessToken`.
+2. `src/lib/server/session.ts` checks the JWT `exp` and transparently
+   refreshes via `${D6E_BASE_URL}/api/v1/auth/token` (b-button, never
+   d6e-auth) when within 60s of expiry, so the rotated cookie always
+   carries a b-button-issued access token.
+3. All d6e API helpers in `src/lib/server/d6e-client.ts` accept the
+   access token as an explicit argument; route handlers pass
+   `event.locals.accessToken` (via `requireAccessToken()` for type
+   narrowing).
 
 The Bearer headers used by `/api/workflows/execute-by-intent` and
-`/api/v1/workspaces/{id}/files` and the `Cookie: auth-token=...` value
-used by `/api/workspace-prompt-rules` and `/api/chat-sessions` all
-carry the same access token; only the header name differs.
+`/api/v1/workspaces/{id}/files/multipart` and the `Cookie: auth-token=...`
+value used by `/api/workspace-prompt-rules` and `/api/chat-sessions`
+all carry the same JWT; only the header name differs.
 
 ## LLM output contract
 

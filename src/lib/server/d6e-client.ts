@@ -1,19 +1,21 @@
 // Thin server-side wrapper around the d6e REST endpoints used by this app.
 //
-// Surfaces exposed:
-//   - uploadFile():   POST /api/v1/workspaces/{wsId}/files/multipart on the
-//                     d6e Rust API. Uploads a single binary as multipart/form-data
-//                     and returns the storage UUID + mimeType + sizeBytes so the
-//                     caller can immediately build an IntentInputFileRef.
-//   - deleteFile():   DELETE /api/v1/workspaces/{wsId}/files/{fileId}. Best-effort
-//                     cleanup used when execute-by-intent fails before consuming
-//                     the file, mirroring the d6e-auth proxy behaviour.
+// Purpose:
+//   Every function here takes the caller's access token as an explicit
+//   argument. The token is obtained from event.locals.accessToken,
+//   which hooks.server.ts populates from the auth-access cookie
+//   (with automatic refresh via auth-refresh). The wrapper never
+//   reads cookies or env-stored credentials directly.
+//
+// Main specifications:
+//   - uploadFile():   POST /api/v1/workspaces/{wsId}/files/multipart on
+//                     the d6e Rust API as multipart/form-data.
+//   - deleteFile():   DELETE /api/v1/workspaces/{wsId}/files/{fileId}.
 //   - executeByIntent(): POST /api/workflows/execute-by-intent on the
-//                     d6e SvelteKit frontend. Used by /api/intent to run a
-//                     natural language workflow with the previously uploaded
-//                     file references. Supports an external AbortSignal and a
-//                     bounded timeout (default 270s, below Vercel's 300s cap)
-//                     and surfaces timeout / abort as D6eClientError flags.
+//                     d6e SvelteKit frontend. Supports an external
+//                     AbortSignal and a bounded timeout (default 270s,
+//                     below Vercel's 300s cap) and surfaces timeout /
+//                     abort as D6eClientError flags.
 //   - listChatSessions() / getChatSessionById() / createChatSession() /
 //     updateChatSession() / deleteChatSession(): CRUD against the d6e
 //     SvelteKit /api/chat-sessions surface. These use COOKIE auth
@@ -21,36 +23,26 @@
 //     session API resolves the user via locals.user, which only the
 //     hooks.server cookie pipeline populates. The cookie value is the
 //     same JWT we use as Bearer elsewhere.
+//   - verifyWorkspaceMembership(): GET /api/v1/workspaces/{wsId} probe
+//     used by /auth/callback to enforce the workspace allow-list.
 //
-// All calls are made server-side so the user's browser never sees the
-// d6e access token. The token itself is obtained from ./d6e-token.ts,
-// which exchanges the long-lived refresh token in D6E_REFRESH_TOKEN for a
-// short-lived access token via d6e-auth and caches it in memory. On a
-// 401 we invalidate the cache and retry once so a server that has been
-// running long enough for the upstream token to be revoked recovers
-// without a process restart.
-//
-// Errors are normalised into D6eClientError so that the calling route
+// Errors are normalised into D6eClientError so the calling route
 // handler can decide which HTTP status to surface.
 //
-// Why multipart upload?
-//   The Rust API exposes both a JSON+base64 endpoint (`/files`) and a
-//   multipart endpoint (`/files/multipart`). The multipart endpoint is what
-//   the production d6e-auth SNS proxy uses and avoids 33% base64 overhead
-//   on large attachments, which matters for receipt photos.
+// Limitations:
+//   - On a 401 the wrapper does NOT silently refresh. The hook layer
+//     already keeps the cookie token fresh, so a 401 here means the
+//     token has been revoked server-side. Bubble it up; the calling
+//     route handler will surface it to the browser, which will then
+//     hit /auth/login the next time the user navigates.
 
-import { getAccessToken, invalidateAccessToken } from './d6e-token';
 import { getD6eUrl, getD6eWorkspaceId } from './env';
 
-// Default per-file upload timeout, matching the d6e-auth proxy contract.
 const UPLOAD_TIMEOUT_MS = 60_000;
-
-// Storage delete is a best-effort housekeeping call, so the timeout is short.
 const DELETE_TIMEOUT_MS = 10_000;
-
-// Default execute-by-intent timeout. Kept below Vercel's 300s function cap
-// so the SvelteKit route handler has time to clean up before being killed.
 const DEFAULT_INTENT_TIMEOUT_MS = 270_000;
+const CHAT_SESSIONS_TIMEOUT_MS = 30_000;
+const MEMBERSHIP_TIMEOUT_MS = 10_000;
 
 // "Client Closed Request" — d6e returns this when the upstream stream aborts.
 const HTTP_CLIENT_CLOSED_REQUEST = 499;
@@ -111,15 +103,15 @@ async function readUpstreamBody(response: Response): Promise<string> {
 	}
 }
 
-// True when fetch threw due to AbortSignal.timeout() or controller.abort().
 function isAbortLikeError(error: unknown): boolean {
 	if (!(error instanceof Error)) return false;
 	return error.name === 'AbortError' || error.name === 'TimeoutError';
 }
 
 // Combine an external AbortSignal (if any) with a timeout-based signal.
-// AbortSignal.any() requires Node.js 20.3+, which Vercel functions already
-// provide; locally this needs a Node 20+ runtime as declared in package.json.
+// AbortSignal.any() requires Node.js 20.3+, which Vercel functions
+// already provide; locally this needs a Node 20+ runtime as declared
+// in package.json.
 function buildCombinedSignal(
 	timeoutMs: number,
 	externalSignal: AbortSignal | undefined
@@ -133,15 +125,14 @@ function buildCombinedSignal(
 
 /**
  * Upload a single file buffer to the d6e Storage API as multipart/form-data
- * and return its UUID plus the canonical content type and size. The size is
- * recomputed from the buffer length so the caller does not have to trust the
- * incoming `Content-Length` header.
+ * and return its UUID plus the canonical content type and size.
  *
- * @param caller Short tag (e.g. "/api/upload") used in error messages.
- * @param payload Filename / mime / raw buffer / optional external abort signal.
+ * The size is recomputed from the buffer length so the caller does not
+ * have to trust the incoming `Content-Length` header.
  */
 export async function uploadFile(
 	caller: string,
+	accessToken: string,
 	payload: {
 		filename: string;
 		contentType: string;
@@ -155,18 +146,15 @@ export async function uploadFile(
 	const contentType = payload.contentType || 'application/octet-stream';
 	const sizeBytes = payload.content.byteLength;
 
-	// FormData itself is reusable across retries because it does not consume
-	// its underlying blobs until fetch() reads them, but we still need a
-	// fresh AbortSignal per attempt so the timeout is reset on the retry.
 	const formData = new FormData();
 	const blob = new Blob([new Uint8Array(payload.content)], { type: contentType });
 	formData.append('file', blob, payload.filename);
 	formData.append('metadata', JSON.stringify({ source: 'd6e-ai-keiri-example' }));
 
 	const url = `${apiUrl}/api/v1/workspaces/${workspaceId}/files/multipart`;
-	const doFetch = async (): Promise<Response> => {
-		const accessToken = await getAccessToken(caller);
-		return fetch(url, {
+	let response: Response;
+	try {
+		response = await fetch(url, {
 			method: 'POST',
 			headers: {
 				Authorization: `Bearer ${accessToken}`,
@@ -175,18 +163,6 @@ export async function uploadFile(
 			body: formData,
 			signal: buildCombinedSignal(UPLOAD_TIMEOUT_MS, payload.signal)
 		});
-	};
-
-	let response: Response;
-	try {
-		response = await doFetch();
-		// 401 usually means the cached access token expired between the
-		// last refresh check and the upstream call (clock skew or aggressive
-		// revocation). Drop the cache and retry once with a fresh token.
-		if (response.status === 401) {
-			invalidateAccessToken();
-			response = await doFetch();
-		}
 	} catch (err) {
 		if (payload.signal?.aborted) {
 			throw new D6eClientError(
@@ -241,18 +217,26 @@ export async function uploadFile(
 }
 
 /**
- * Best-effort delete of a previously uploaded file. Used by /api/intent to
- * release storage space when execute-by-intent failed outright (and therefore
- * never consumed the file). Failures are logged but do not throw so that the
- * caller can still propagate the original error.
+ * Delete a previously uploaded file. Called both for explicit user
+ * removal (DELETE /api/upload/[fileId]) and for best-effort cleanup
+ * after a failed execute-by-intent run.
+ *
+ * Returns true when the upstream confirmed the deletion (or reported
+ * 404, meaning the file was already gone), false when the upstream
+ * rejected the request or the network round-trip failed. Failures
+ * are also logged so best-effort callers can simply ignore the
+ * boolean while user-facing callers can surface a useful error.
  */
-export async function deleteFile(caller: string, fileId: string): Promise<void> {
+export async function deleteFile(
+	caller: string,
+	accessToken: string,
+	fileId: string
+): Promise<boolean> {
 	const apiUrl = getD6eUrl(caller);
 	const workspaceId = getD6eWorkspaceId(caller);
 
 	const url = `${apiUrl}/api/v1/workspaces/${workspaceId}/files/${fileId}`;
 	try {
-		const accessToken = await getAccessToken(caller);
 		const response = await fetch(url, {
 			method: 'DELETE',
 			headers: {
@@ -261,18 +245,18 @@ export async function deleteFile(caller: string, fileId: string): Promise<void> 
 			},
 			signal: AbortSignal.timeout(DELETE_TIMEOUT_MS)
 		});
-		// Best-effort: a 401 here means the cached token expired but cleanup
-		// is not worth the round-trip to refresh — the caller is already
-		// raising a separate error to the user. Just log and move on.
-		if (!response.ok && response.status !== 404) {
-			const body = await readUpstreamBody(response);
-			console.error(
-				`[d6e-client] deleteFile failed (${caller}): status=${response.status} fileId=${fileId} body=${body.slice(0, 300)}`
-			);
+		if (response.ok || response.status === 404) {
+			return true;
 		}
+		const body = await readUpstreamBody(response);
+		console.error(
+			`[d6e-client] deleteFile failed (${caller}): status=${response.status} fileId=${fileId} body=${body.slice(0, 300)}`
+		);
+		return false;
 	} catch (err) {
 		const msg = err instanceof Error ? err.message : String(err);
 		console.error(`[d6e-client] deleteFile error (${caller}): fileId=${fileId} message=${msg}`);
+		return false;
 	}
 }
 
@@ -286,13 +270,10 @@ export async function deleteFile(caller: string, fileId: string): Promise<void> 
  * Successful 200 responses where `success === false` are returned as-is so
  * the caller can decide how to render a logical failure (e.g. policy blocked
  * the run) vs. a transport failure.
- *
- * @param caller Short tag for diagnostics.
- * @param body Free-form natural language message + optional file refs.
- * @param options Optional timeout override and external abort signal.
  */
 export async function executeByIntent(
 	caller: string,
+	accessToken: string,
 	body: { message: string; inputFileRefs?: IntentInputFileRef[] },
 	options?: { timeoutMs?: number; signal?: AbortSignal }
 ): Promise<IntentResponse> {
@@ -319,9 +300,9 @@ export async function executeByIntent(
 	};
 
 	const requestUrl = `${frontendUrl}/api/workflows/execute-by-intent`;
-	const doFetch = async (): Promise<Response> => {
-		const accessToken = await getAccessToken(caller);
-		return fetch(requestUrl, {
+	let response: Response;
+	try {
+		response = await fetch(requestUrl, {
 			method: 'POST',
 			headers: {
 				Authorization: `Bearer ${accessToken}`,
@@ -330,17 +311,6 @@ export async function executeByIntent(
 			body: JSON.stringify(requestBody),
 			signal: buildCombinedSignal(timeoutMs, externalSignal)
 		});
-	};
-
-	let response: Response;
-	try {
-		response = await doFetch();
-		// Same auto-recovery as uploadFile: if the upstream token was revoked
-		// while we were idle, drop the cache and retry once.
-		if (response.status === 401) {
-			invalidateAccessToken();
-			response = await doFetch();
-		}
 	} catch (err) {
 		if (externalSignal?.aborted) {
 			throw new D6eClientError(
@@ -390,10 +360,59 @@ export async function executeByIntent(
 	}
 }
 
-// Default timeout for chat-session CRUD. These calls are small JSON
-// requests against the d6e SvelteKit DB layer so a short ceiling is
-// enough; we keep it well below Vercel's function cap.
-const CHAT_SESSIONS_TIMEOUT_MS = 30_000;
+/**
+ * Confirm that the logged-in user is a member of the workspace.
+ *
+ * Used by /auth/callback after token exchange to enforce the per-app
+ * workspace allow-list. Returns true on HTTP 200, false on 403/404,
+ * and throws D6eClientError on transport failure so the caller can
+ * decide whether to bounce to /auth/no-access or /auth/login.
+ */
+export async function verifyWorkspaceMembership(
+	caller: string,
+	accessToken: string
+): Promise<boolean> {
+	const baseUrl = getD6eUrl(caller);
+	const workspaceId = getD6eWorkspaceId(caller);
+	const url = `${baseUrl}/api/v1/workspaces/${workspaceId}`;
+
+	let response: Response;
+	try {
+		response = await fetch(url, {
+			method: 'GET',
+			headers: {
+				Authorization: `Bearer ${accessToken}`,
+				Accept: 'application/json'
+			},
+			signal: AbortSignal.timeout(MEMBERSHIP_TIMEOUT_MS)
+		});
+	} catch (err) {
+		const msg = err instanceof Error ? err.message : String(err);
+		throw new D6eClientError(
+			`verifyWorkspaceMembership: network error talking to ${url} (${caller}): ${msg}`,
+			502,
+			''
+		);
+	}
+
+	if (response.status === 200) {
+		await readUpstreamBody(response);
+		return true;
+	}
+	if (response.status === 403 || response.status === 404) {
+		const body = await readUpstreamBody(response);
+		console.warn(
+			`[d6e-client] verifyWorkspaceMembership rejected (${caller}): status=${response.status} body=${body.slice(0, 300)}`
+		);
+		return false;
+	}
+	const body = await readUpstreamBody(response);
+	throw new D6eClientError(
+		`verifyWorkspaceMembership unexpected status ${response.status} (${caller})`,
+		response.status,
+		body
+	);
+}
 
 // Loose UIMessage shape. We do not validate the structure here because
 // d6e accepts both legacy Message[] rows and AI SDK v5 UIMessage[]; the
@@ -412,46 +431,38 @@ export interface ChatSessionRow {
 }
 
 /**
- * Internal helper that performs a JSON request against the d6e SvelteKit
- * chat-session endpoints using the OAuth access token as the auth-token
- * cookie. Handles a one-shot 401 retry through invalidateAccessToken().
+ * Internal helper: JSON request against the d6e SvelteKit chat-session
+ * endpoints, using the access token as the auth-token cookie value.
  *
  * The path is appended to D6E_BASE_URL exactly as given so callers stay
  * explicit about which sub-route they are hitting.
  */
 async function chatSessionsRequest(
 	caller: string,
+	accessToken: string,
 	path: string,
 	init: { method: 'GET' | 'POST' | 'PATCH' | 'DELETE'; body?: unknown }
 ): Promise<Response> {
 	const frontendUrl = getD6eUrl(caller);
 	const url = `${frontendUrl}${path}`;
 
-	const doFetch = async (): Promise<Response> => {
-		const accessToken = await getAccessToken(caller);
-		const headers: Record<string, string> = {
-			Cookie: `auth-token=${accessToken}`,
-			Accept: 'application/json'
-		};
-		const fetchInit: RequestInit = {
-			method: init.method,
-			headers,
-			signal: AbortSignal.timeout(CHAT_SESSIONS_TIMEOUT_MS)
-		};
-		if (init.body !== undefined) {
-			headers['Content-Type'] = 'application/json';
-			fetchInit.body = JSON.stringify(init.body);
-		}
-		return fetch(url, fetchInit);
+	const headers: Record<string, string> = {
+		Cookie: `auth-token=${accessToken}`,
+		Accept: 'application/json'
 	};
+	const fetchInit: RequestInit = {
+		method: init.method,
+		headers,
+		signal: AbortSignal.timeout(CHAT_SESSIONS_TIMEOUT_MS)
+	};
+	if (init.body !== undefined) {
+		headers['Content-Type'] = 'application/json';
+		fetchInit.body = JSON.stringify(init.body);
+	}
 
 	let response: Response;
 	try {
-		response = await doFetch();
-		if (response.status === 401) {
-			invalidateAccessToken();
-			response = await doFetch();
-		}
+		response = await fetch(url, fetchInit);
 	} catch (err) {
 		if (isAbortLikeError(err)) {
 			throw new D6eClientError(
@@ -479,99 +490,75 @@ async function chatSessionsRequest(
 	return response;
 }
 
-/**
- * List every chat_session row that belongs to the given workspace.
- * Filtering by title prefix / completion suffix is done by the caller
- * because it depends on UI conventions specific to this app.
- */
 export async function listChatSessions(
 	caller: string,
+	accessToken: string,
 	workspaceId: string
 ): Promise<ChatSessionRow[]> {
 	const path = `/api/chat-sessions?workspaceId=${encodeURIComponent(workspaceId)}`;
-	const response = await chatSessionsRequest(caller, path, { method: 'GET' });
+	const response = await chatSessionsRequest(caller, accessToken, path, { method: 'GET' });
 	const body = (await response.json()) as ChatSessionRow[];
 	return Array.isArray(body) ? body : [];
 }
 
-/**
- * Fetch a single chat_session row by id. Returns 404 as a D6eClientError
- * with status 404 so the caller can decide whether to surface "not
- * found" vs. a generic 500.
- */
 export async function getChatSessionById(
 	caller: string,
+	accessToken: string,
 	sessionId: string
 ): Promise<ChatSessionRow> {
 	const path = `/api/chat-sessions/${encodeURIComponent(sessionId)}`;
-	const response = await chatSessionsRequest(caller, path, { method: 'GET' });
+	const response = await chatSessionsRequest(caller, accessToken, path, { method: 'GET' });
 	return (await response.json()) as ChatSessionRow;
 }
 
-/**
- * Create a new chat_session row. The d6e endpoint enforces workspace
- * membership server-side, so we cannot create rows for arbitrary
- * workspaces — callers must pass D6E_WORKSPACE_ID.
- *
- * `messages` is shaped as AI SDK UIMessage[] in this app but the
- * underlying column is jsonb so the helper accepts any JSON-serialisable
- * array.
- */
 export async function createChatSession(
 	caller: string,
+	accessToken: string,
 	args: {
 		workspaceId: string;
 		title: string | null;
 		messages: ChatSessionMessage[];
 	}
 ): Promise<ChatSessionRow> {
-	const response = await chatSessionsRequest(caller, '/api/chat-sessions', {
+	const response = await chatSessionsRequest(caller, accessToken, '/api/chat-sessions', {
 		method: 'POST',
 		body: args
 	});
 	return (await response.json()) as ChatSessionRow;
 }
 
-/**
- * Patch a chat_session's title and/or messages. Both fields are
- * optional. The d6e PATCH handler refreshes `updated_at` automatically.
- */
 export async function updateChatSession(
 	caller: string,
+	accessToken: string,
 	sessionId: string,
 	patch: { title?: string | null; messages?: ChatSessionMessage[] }
 ): Promise<ChatSessionRow> {
 	const path = `/api/chat-sessions/${encodeURIComponent(sessionId)}`;
-	const response = await chatSessionsRequest(caller, path, {
+	const response = await chatSessionsRequest(caller, accessToken, path, {
 		method: 'PATCH',
 		body: patch
 	});
 	return (await response.json()) as ChatSessionRow;
 }
 
-/**
- * Delete a chat_session row. d6e additionally cleans up Storage files
- * referenced by attachments inside `messages`; we rely on that server-
- * side behaviour rather than tracking attachments here.
- */
-export async function deleteChatSession(caller: string, sessionId: string): Promise<void> {
+export async function deleteChatSession(
+	caller: string,
+	accessToken: string,
+	sessionId: string
+): Promise<void> {
 	const path = `/api/chat-sessions/${encodeURIComponent(sessionId)}`;
-	await chatSessionsRequest(caller, path, { method: 'DELETE' });
+	await chatSessionsRequest(caller, accessToken, path, { method: 'DELETE' });
 }
 
 /**
- * Shared loader used by both +page.server.ts files to stream the
- * chat_session row list to the page. Wraps env-variable resolution and
- * listChatSessions into a single call that folds any failure into the
- * returned shape, so SSR loaders can render an inline error banner
- * without the rest of the page crashing.
- *
- * The return shape is structurally compatible with TasksFetchResult in
- * $lib/journal-task; defining it inline keeps this server-only module
- * from depending on the (client-safe) journal-task module.
+ * Shared loader used by SSR loaders to stream the chat_session row
+ * list to the page. Folds any failure into the returned shape so
+ * load() can render an inline error banner without the rest of the
+ * page crashing.
  */
 export async function fetchChatSessionsForCaller(
-	caller: string
+	caller: string,
+	accessToken: string
 ): Promise<{ ok: boolean; rows: ChatSessionRow[]; error?: string }> {
 	let workspaceId: string;
 	try {
@@ -583,7 +570,7 @@ export async function fetchChatSessionsForCaller(
 	}
 
 	try {
-		const rows = await listChatSessions(caller, workspaceId);
+		const rows = await listChatSessions(caller, accessToken, workspaceId);
 		return { ok: true, rows };
 	} catch (err) {
 		const msg =

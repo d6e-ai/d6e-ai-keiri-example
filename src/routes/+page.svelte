@@ -1,14 +1,17 @@
 <script lang="ts">
-	// AI Journal page (route "/")
+	// AI Journal page (route "/").
 	//
 	// End-to-end flow:
-	//   1. User drops a receipt image -> POST /api/upload to register it
-	//      with d6e Storage. The response gives us an IntentInputFileRef
-	//      that execute-by-intent expects.
-	//   2. We then call POST /api/intent with the initial creation prompt
-	//      and the file ref. The server persists the turn as a new
-	//      chat_session row and returns its id so we can keep revising
-	//      against the same session.
+	//   1. User picks (or drops) one or more receipt files. Each file
+	//      is POSTed to /api/upload in parallel; on success the
+	//      returned IntentInputFileRef is appended to `uploadedRefs`.
+	//      Files that fail upload stay in `pendingUploads` with an
+	//      error status so the user can retry.
+	//   2. The user clicks the "Generate journal" button. We then call
+	//      POST /api/intent with the full uploadedRefs array as
+	//      inputFileRefs[] and persistAs='journal'. The chat_session id
+	//      that comes back is stored so subsequent revise turns append
+	//      to the same row.
 	//   3. The assistant message is parsed via parse-journal; success
 	//      renders either the journal table (kind:"journal") or the
 	//      registration result card (kind:"registration"). Anything else
@@ -20,8 +23,8 @@
 	//        - kind:"registration"  -> <additional_comment>...</additional_comment>
 	//          so the LLM treats it as a continuation of the registration
 	//          turn (e.g. user provided a company_id the LLM asked for).
-	//      The same fileRef and chatSessionId are re-sent so the server
-	//      appends to the same chat_session row.
+	//      The same uploadedRefs and chatSessionId are re-sent so the
+	//      server appends to the same chat_session row.
 	//   5. The "freee に登録" button (rendered inside JournalResult when
 	//      kind:"journal") triggers handleRegister(). It sends a fixed
 	//      registration-request message that wraps the previous journal
@@ -41,6 +44,7 @@
 
 	import AlertCircleIcon from '@lucide/svelte/icons/alert-circle';
 	import LoaderCircleIcon from '@lucide/svelte/icons/loader-circle';
+	import PlayIcon from '@lucide/svelte/icons/play';
 	import { invalidateAll } from '$app/navigation';
 
 	import JournalResult from '$lib/components/journal-result.svelte';
@@ -48,6 +52,7 @@
 	import ReviseCommentForm from '$lib/components/revise-comment-form.svelte';
 	import TaskCard from '$lib/components/task-card.svelte';
 	import TaskDetailDialog from '$lib/components/task-detail-dialog.svelte';
+	import UploadedFileList from '$lib/components/uploaded-file-list.svelte';
 	import {
 		findFreshTaskSummary,
 		toFilteredTasks,
@@ -55,29 +60,34 @@
 	} from '$lib/journal-task';
 	import * as m from '$lib/paraglide/messages.js';
 	import { parseJournalMessage, type ParseResult } from '$lib/parse-journal';
+	import type { PendingUploadView, UploadedFileView } from '$lib/upload-types';
 	import { cn } from '$lib/utils';
 
 	import type { PageData } from './$types';
 
-	interface UploadedFileRef {
-		fileId: string;
-		filename: string;
-		mimeType: string;
-		sizeBytes: number;
-	}
-
-	const CREATE_PROMPT = '添付した領収書画像を解析して、freee 登録用の仕訳一覧を作成してください。';
+	const CREATE_PROMPT =
+		'添付した領収書画像を解析して、freee 登録用の仕訳一覧を作成してください。' +
+		'複数の領収書がある場合はすべて読み取って 1 つの仕訳一覧にまとめてください。';
 	const REGISTER_PROMPT_HEADER =
 		'下記の仕訳を freee に登録し、添付の領収書を Google Drive にアップロードしてください。';
 
 	let { data }: { data: PageData } = $props();
 
-	let isLoading = $state(false);
-	// Independent flag so the register button can show its own spinner
-	// instead of just being disabled while the rest of the page is dimmed.
+	let pendingUploads = $state<PendingUploadView[]>([]);
+	let uploadedRefs = $state<UploadedFileView[]>([]);
+	// Counter of in-flight DELETE /api/upload/{fileId} round-trips.
+	// Folded into canExecute so the user cannot race a pending delete
+	// against "Generate journal": if the delete fails after the journal
+	// was already submitted, the file gets restored to the queue but
+	// the journal was generated without it, leaving the UI inconsistent.
+	let deletesInFlight = $state(0);
+
+	let isExecuting = $state(false);
+	// Independent flag so the freee register button can show its own
+	// spinner / loading text inside the page banner while the rest of
+	// the page stays in the generic "isExecuting" state.
 	let registerInFlight = $state(false);
 	let errorMessage = $state<string | null>(null);
-	let currentFileRef = $state<UploadedFileRef | null>(null);
 	let currentChatSessionId = $state<string | null>(null);
 	let parseResult = $state<ParseResult | null>(null);
 
@@ -91,27 +101,179 @@
 		parseResult?.kind === 'registration' ? 'followup' : 'journal'
 	);
 
-	async function uploadReceipt(file: File): Promise<UploadedFileRef> {
+	const hasUploadInFlight = $derived(pendingUploads.some((entry) => entry.status === 'uploading'));
+	const hasDeleteInFlight = $derived(deletesInFlight > 0);
+	const canExecute = $derived(
+		uploadedRefs.length > 0 && !hasUploadInFlight && !hasDeleteInFlight && !isExecuting
+	);
+	const executeBlockedHint = $derived.by(() => {
+		if (isExecuting) return null;
+		if (hasUploadInFlight || hasDeleteInFlight) return m.journal_upload_run_disabled_uploading();
+		if (uploadedRefs.length === 0) return m.journal_upload_run_disabled_empty();
+		return null;
+	});
+
+	function generateLocalId(): string {
+		return typeof crypto !== 'undefined' && 'randomUUID' in crypto
+			? crypto.randomUUID()
+			: `local-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+	}
+
+	function isUploadedFileView(value: unknown): value is UploadedFileView {
+		if (!value || typeof value !== 'object') return false;
+		const v = value as Record<string, unknown>;
+		return (
+			typeof v.fileId === 'string' &&
+			v.fileId.length > 0 &&
+			typeof v.filename === 'string' &&
+			typeof v.mimeType === 'string' &&
+			typeof v.sizeBytes === 'number'
+		);
+	}
+
+	async function uploadOne(file: File, localId: string): Promise<void> {
 		const formData = new FormData();
 		formData.append('file', file);
-		const response = await fetch('/api/upload', { method: 'POST', body: formData });
-		const payload: unknown = await response.json().catch(() => ({}));
-		if (!response.ok) {
-			const errPayload = payload as { error?: string } | null | undefined;
-			const detail = errPayload && typeof errPayload.error === 'string' ? errPayload.error : '';
-			throw new Error(`Upload failed (${response.status}): ${detail}`);
+
+		let response: Response;
+		try {
+			response = await fetch('/api/upload', { method: 'POST', body: formData });
+		} catch (err) {
+			const detail = err instanceof Error ? err.message : String(err);
+			pendingUploads = pendingUploads.map((entry) =>
+				entry.localId === localId ? { ...entry, status: 'error', errorMessage: detail } : entry
+			);
+			errorMessage = m.journal_upload_failed({ filename: file.name, detail });
+			console.error('[ai-journal-page] uploadOne network error:', detail);
+			return;
 		}
-		return payload as UploadedFileRef;
+
+		// If hooks.server.ts redirected the request to /auth/login (e.g. the
+		// session expired between page load and the upload), the browser may
+		// follow the chain into a 200 HTML response. response.ok is then
+		// true but the body is not JSON — guard against that by validating
+		// the parsed payload shape before accepting it as an UploadedFileView.
+		const payload: unknown = await response.json().catch(() => null);
+		if (!response.ok) {
+			const err = payload as { error?: string } | null | undefined;
+			const detail = err && typeof err.error === 'string' ? err.error : `HTTP ${response.status}`;
+			pendingUploads = pendingUploads.map((entry) =>
+				entry.localId === localId ? { ...entry, status: 'error', errorMessage: detail } : entry
+			);
+			errorMessage = m.journal_upload_failed({ filename: file.name, detail });
+			console.error('[ai-journal-page] uploadOne server error:', detail);
+			return;
+		}
+
+		if (!isUploadedFileView(payload)) {
+			const detail = `HTTP ${response.status} returned an unexpected body (session may have expired)`;
+			pendingUploads = pendingUploads.map((entry) =>
+				entry.localId === localId ? { ...entry, status: 'error', errorMessage: detail } : entry
+			);
+			errorMessage = m.journal_upload_failed({ filename: file.name, detail });
+			console.error('[ai-journal-page] uploadOne invalid payload:', detail);
+			return;
+		}
+
+		uploadedRefs = [...uploadedRefs, payload];
+		pendingUploads = pendingUploads.filter((entry) => entry.localId !== localId);
+	}
+
+	function handleFiles(files: File[]): void {
+		errorMessage = null;
+
+		const newPending: PendingUploadView[] = files.map((file) => ({
+			localId: generateLocalId(),
+			filename: file.name,
+			status: 'uploading'
+		}));
+		pendingUploads = [...pendingUploads, ...newPending];
+
+		newPending.forEach((entry, index) => {
+			void uploadOne(files[index], entry.localId);
+		});
+	}
+
+	function handleDismissPending(localId: string): void {
+		pendingUploads = pendingUploads.filter((entry) => entry.localId !== localId);
+	}
+
+	async function handleRemove(fileId: string): Promise<void> {
+		const targetIndex = uploadedRefs.findIndex((ref) => ref.fileId === fileId);
+		if (targetIndex === -1) return;
+		const target = uploadedRefs[targetIndex];
+		// Snapshot the file ids that preceded the target so a later
+		// restore can reconstruct the original ordering even if other
+		// concurrent removes have mutated the array in the meantime.
+		// A bare numeric index would be stale once a sibling restore
+		// shifted the array, yielding orderings like [B, A, C] instead
+		// of [A, B, C].
+		const predecessorIds = uploadedRefs.slice(0, targetIndex).map((ref) => ref.fileId);
+		uploadedRefs = uploadedRefs.filter((ref) => ref.fileId !== fileId);
+
+		// Restore the entry to its original relative position when the
+		// server-side delete fails so the user can retry; otherwise the
+		// file would disappear from the UI while still occupying d6e
+		// Storage. We anchor on the rightmost surviving predecessor so
+		// concurrent restores reconverge on the original order.
+		const restore = () => {
+			if (uploadedRefs.some((ref) => ref.fileId === fileId)) return;
+			const predecessorSet = new Set(predecessorIds);
+			let insertAt = 0;
+			for (let i = uploadedRefs.length - 1; i >= 0; i -= 1) {
+				if (predecessorSet.has(uploadedRefs[i].fileId)) {
+					insertAt = i + 1;
+					break;
+				}
+			}
+			uploadedRefs = [...uploadedRefs.slice(0, insertAt), target, ...uploadedRefs.slice(insertAt)];
+		};
+
+		deletesInFlight += 1;
+		try {
+			const response = await fetch(`/api/upload/${encodeURIComponent(fileId)}`, {
+				method: 'DELETE'
+			});
+			// If hooks.server.ts redirected the request to /auth/login (e.g.
+			// the session expired mid-interaction), the browser may follow
+			// the chain into a 200 HTML response. response.ok is then true
+			// but the file was never actually deleted on d6e Storage —
+			// validate the JSON payload shape to detect this case and
+			// restore the entry so it does not orphan the blob.
+			const payload: unknown = await response.json().catch(() => null);
+			if (!response.ok) {
+				const detail = `HTTP ${response.status}`;
+				errorMessage = m.journal_upload_remove_failed();
+				console.error('[ai-journal-page] handleRemove failed:', detail);
+				restore();
+			} else if (
+				!payload ||
+				typeof payload !== 'object' ||
+				(payload as { ok?: unknown }).ok !== true
+			) {
+				const detail = `HTTP ${response.status} returned an unexpected body (session may have expired)`;
+				errorMessage = m.journal_upload_remove_failed();
+				console.error('[ai-journal-page] handleRemove invalid payload:', detail);
+				restore();
+			}
+		} catch (err) {
+			const detail = err instanceof Error ? err.message : String(err);
+			errorMessage = m.journal_upload_remove_failed();
+			console.error('[ai-journal-page] handleRemove network error:', detail);
+			restore();
+		} finally {
+			deletesInFlight -= 1;
+		}
 	}
 
 	async function callIntent(
 		message: string,
-		fileRef: UploadedFileRef,
+		fileRefs: UploadedFileView[],
 		chatSessionId: string | null
 	): Promise<{ rawMessage: string; chatSessionId: string | null }> {
 		const requestBody: Record<string, unknown> = {
 			message,
-			inputFileRefs: [fileRef],
+			inputFileRefs: fileRefs,
 			persistAs: 'journal'
 		};
 		if (chatSessionId) requestBody.chatSessionId = chatSessionId;
@@ -137,34 +299,33 @@
 		};
 	}
 
-	async function handleFile(file: File): Promise<void> {
+	async function handleExecute(): Promise<void> {
+		if (!canExecute) return;
 		errorMessage = null;
-		isLoading = true;
+		isExecuting = true;
 		parseResult = null;
 		currentChatSessionId = null;
 		try {
-			const ref = await uploadReceipt(file);
-			currentFileRef = ref;
-			const { rawMessage, chatSessionId } = await callIntent(CREATE_PROMPT, ref, null);
+			const { rawMessage, chatSessionId } = await callIntent(CREATE_PROMPT, uploadedRefs, null);
 			parseResult = parseJournalMessage(rawMessage);
 			currentChatSessionId = chatSessionId;
 			await invalidateAll();
 		} catch (err) {
 			const detail = err instanceof Error ? err.message : String(err);
 			errorMessage = detail;
-			console.error('[ai-journal-page] handleFile failed:', detail);
+			console.error('[ai-journal-page] handleExecute failed:', detail);
 		} finally {
-			isLoading = false;
+			isExecuting = false;
 		}
 	}
 
 	async function handleRevise(comment: string): Promise<void> {
-		if (!currentFileRef || !parseResult) {
+		if (uploadedRefs.length === 0 || !parseResult) {
 			errorMessage = 'No previous assistant response to revise.';
 			return;
 		}
 		errorMessage = null;
-		isLoading = true;
+		isExecuting = true;
 		try {
 			let message: string;
 			if (parseResult.kind === 'journal') {
@@ -197,7 +358,7 @@
 
 			const { rawMessage, chatSessionId } = await callIntent(
 				message,
-				currentFileRef,
+				uploadedRefs,
 				currentChatSessionId
 			);
 			parseResult = parseJournalMessage(rawMessage);
@@ -208,17 +369,17 @@
 			errorMessage = detail;
 			console.error('[ai-journal-page] handleRevise failed:', detail);
 		} finally {
-			isLoading = false;
+			isExecuting = false;
 		}
 	}
 
 	async function handleRegister(): Promise<void> {
-		if (!currentFileRef || !parseResult || parseResult.kind !== 'journal') {
+		if (uploadedRefs.length === 0 || !parseResult || parseResult.kind !== 'journal') {
 			errorMessage = 'No journal payload to register.';
 			return;
 		}
 		errorMessage = null;
-		isLoading = true;
+		isExecuting = true;
 		registerInFlight = true;
 		try {
 			const journalJson = JSON.stringify(parseResult.result, null, 2);
@@ -231,7 +392,7 @@
 
 			const { rawMessage, chatSessionId } = await callIntent(
 				message,
-				currentFileRef,
+				uploadedRefs,
 				currentChatSessionId
 			);
 			parseResult = parseJournalMessage(rawMessage);
@@ -243,7 +404,7 @@
 			console.error('[ai-journal-page] handleRegister failed:', detail);
 		} finally {
 			registerInFlight = false;
-			isLoading = false;
+			isExecuting = false;
 		}
 	}
 
@@ -270,11 +431,6 @@
 	// happened while the dialog was open. detailTask is read via
 	// untrack() because the .then() callback writes a fresh object back
 	// to it; tracking would re-fire the effect and loop forever.
-	//
-	// The effect cleanup flips `cancelled` so a stale .then() callback
-	// from a previous run (e.g. after invalidateAll() swapped the
-	// promise) cannot overwrite detailTask with outdated data if it
-	// happens to resolve out of order.
 	$effect(() => {
 		if (!detailOpen) return;
 		if (!untrack(() => detailTask)) return;
@@ -298,12 +454,55 @@
 		<p class="text-sm text-muted-foreground">{m.journal_description()}</p>
 	</section>
 
-	<section class="space-y-4">
-		<h2 class="text-lg font-semibold">{m.journal_upload_heading()}</h2>
-		<ReceiptUploader onfile={handleFile} disabled={isLoading} />
-	</section>
+	{#if !parseResult}
+		<section class="space-y-4">
+			<h2 class="text-lg font-semibold">{m.journal_upload_heading()}</h2>
+			<ReceiptUploader onfiles={handleFiles} disabled={isExecuting} />
 
-	{#if isLoading}
+			<UploadedFileList
+				pending={pendingUploads}
+				uploaded={uploadedRefs}
+				disabled={isExecuting}
+				readonly={false}
+				onremove={handleRemove}
+				ondismiss={handleDismissPending}
+			/>
+
+			<div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+				<p class="text-xs text-muted-foreground">{m.journal_upload_run_hint()}</p>
+				<div class="flex items-center gap-3">
+					{#if executeBlockedHint}
+						<span class="text-xs text-muted-foreground">{executeBlockedHint}</span>
+					{/if}
+					<button
+						type="button"
+						class={cn(
+							'inline-flex items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm transition-colors',
+							canExecute ? 'hover:bg-primary/90' : 'cursor-not-allowed opacity-50'
+						)}
+						disabled={!canExecute}
+						onclick={handleExecute}
+					>
+						<PlayIcon class="size-4" aria-hidden="true" />
+						{m.journal_upload_run_button()}
+					</button>
+				</div>
+			</div>
+		</section>
+	{:else}
+		<section class="space-y-4">
+			<UploadedFileList
+				pending={pendingUploads}
+				uploaded={uploadedRefs}
+				disabled={false}
+				readonly={true}
+				onremove={handleRemove}
+				ondismiss={handleDismissPending}
+			/>
+		</section>
+	{/if}
+
+	{#if isExecuting}
 		<div
 			class="flex items-center gap-3 rounded-xl border bg-card p-4 text-sm text-muted-foreground shadow-sm"
 		>
@@ -332,11 +531,11 @@
 			<JournalResult
 				parsed={parseResult}
 				onRegister={handleRegister}
-				registerDisabled={isLoading}
+				registerDisabled={isExecuting}
 				{registerInFlight}
 			/>
 			{#if parseResult.kind === 'journal' || parseResult.kind === 'registration'}
-				<ReviseCommentForm onsubmit={handleRevise} disabled={isLoading} mode={reviseMode} />
+				<ReviseCommentForm onsubmit={handleRevise} disabled={isExecuting} mode={reviseMode} />
 			{/if}
 		</section>
 	{/if}
