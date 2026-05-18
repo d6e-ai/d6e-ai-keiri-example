@@ -163,14 +163,30 @@
 		const targetIndex = uploadedRefs.findIndex((ref) => ref.fileId === fileId);
 		if (targetIndex === -1) return;
 		const target = uploadedRefs[targetIndex];
+		// Snapshot the file ids that preceded the target so a later
+		// restore can reconstruct the original ordering even if other
+		// concurrent removes have mutated the array in the meantime.
+		// A bare numeric index would be stale once a sibling restore
+		// shifted the array, yielding orderings like [B, A, C] instead
+		// of [A, B, C].
+		const predecessorIds = uploadedRefs.slice(0, targetIndex).map((ref) => ref.fileId);
 		uploadedRefs = uploadedRefs.filter((ref) => ref.fileId !== fileId);
 
-		// Restore the entry to its original position when the server-side
-		// delete fails so the user can retry; otherwise the file would
-		// disappear from the UI while still occupying d6e Storage.
+		// Restore the entry to its original relative position when the
+		// server-side delete fails so the user can retry; otherwise the
+		// file would disappear from the UI while still occupying d6e
+		// Storage. We anchor on the rightmost surviving predecessor so
+		// concurrent restores reconverge on the original order.
 		const restore = () => {
 			if (uploadedRefs.some((ref) => ref.fileId === fileId)) return;
-			const insertAt = Math.min(targetIndex, uploadedRefs.length);
+			const predecessorSet = new Set(predecessorIds);
+			let insertAt = 0;
+			for (let i = uploadedRefs.length - 1; i >= 0; i -= 1) {
+				if (predecessorSet.has(uploadedRefs[i].fileId)) {
+					insertAt = i + 1;
+					break;
+				}
+			}
 			uploadedRefs = [...uploadedRefs.slice(0, insertAt), target, ...uploadedRefs.slice(insertAt)];
 		};
 
