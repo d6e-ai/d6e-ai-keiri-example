@@ -176,5 +176,6 @@ Conventions when editing them:
   (e.g. `[\`src/lib/server/d6e-client.ts\`](../../src/lib/server/d6e-client.ts)`).
   When you change a referenced module, update the citing skill in
   the same PR.
-- `skills.sh` auto-discovers via the `agent-skills` GitHub topic. Do
-  not remove that topic from the repository settings.
+- `skills.sh` auto-discovers any public repository that exposes
+  `skills/<name>/SKILL.md` files. Keep the repository visibility set
+  to **public** so the listings stay live.

@@ -212,10 +212,12 @@ npx skills add https://github.com/d6e-ai/d6e-ai-keiri-example --skill d6e-prompt
 ```
 
 These skills are auto-discovered by [skills.sh](https://skills.sh) as
-long as this repository carries the `agent-skills` GitHub topic.
-Repository maintainers: add the `agent-skills` topic via
-_Settings → Topics_ on GitHub to surface the skills at
-`https://www.skills.sh/d6e-ai/d6e-ai-keiri-example/<skill-name>`.
+long as the repository is **public** and contains `skills/<name>/SKILL.md`
+files. Once published they appear at
+`https://skills.sh/d6e-ai/d6e-ai-keiri-example/<skill-name>`.
+Repository maintainers: keep the repository visibility set to public
+(_Settings → General → Danger Zone → Change visibility_) so the
+listings stay live.
 
 ## Status & caveats
 

@@ -52,15 +52,17 @@ equivalent in Claude Code) to verify the skills are available.
 ## Discovery & Marketplace Listing
 
 These skills are auto-discovered by [skills.sh](https://skills.sh)
-once this repository carries the `agent-skills` GitHub topic. They
-appear under:
+as long as the repository is **public** and exposes
+`skills/<name>/SKILL.md` files. They appear under:
 
-- <https://www.skills.sh/d6e-ai/d6e-ai-keiri-example/d6e-auth-integration>
-- <https://www.skills.sh/d6e-ai/d6e-ai-keiri-example/d6e-workspace-api-client>
-- <https://www.skills.sh/d6e-ai/d6e-ai-keiri-example/d6e-prompt-driven-ui>
+- <https://skills.sh/d6e-ai/d6e-ai-keiri-example/d6e-auth-integration>
+- <https://skills.sh/d6e-ai/d6e-ai-keiri-example/d6e-workspace-api-client>
+- <https://skills.sh/d6e-ai/d6e-ai-keiri-example/d6e-prompt-driven-ui>
 
-Repository maintainers: if the listing is missing, add the
-`agent-skills` topic via _Settings → Topics_ on GitHub.
+Repository maintainers: if the listing is missing, confirm the
+repository visibility is set to public (_Settings → General →
+Danger Zone → Change visibility_) and wait for the next skills.sh
+crawl cycle.
 
 ## Why These Three?
 
