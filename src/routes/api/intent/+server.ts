@@ -28,12 +28,13 @@
 //   - other 4xx/5xx: bubbled up from d6e's response.
 //
 // Cleanup policy:
-//   When execute-by-intent fails with a *hard* error (non-success, not a
-//   timeout and not an abort) and the request carried inputFileRefs, we
-//   best-effort DELETE those storage records so the workspace does not
-//   accumulate orphaned uploads. Timeouts deliberately leave the files
-//   in place because the workflow may still be running and consuming
-//   them (mirrors d6e-auth's SNS proxy behaviour).
+//   This handler does NOT delete inputFileRefs on failure. In the
+//   multi-file upload flow, the client uploads files independently
+//   into a user-visible queue before pressing "Generate journal", so
+//   the client still holds those fileIds and expects to retry against
+//   the same files. The queue owns the lifecycle: users remove files
+//   via DELETE /api/upload/{fileId}, which is the only path that
+//   should delete storage records.
 
 import { json } from '@sveltejs/kit';
 
@@ -48,7 +49,6 @@ import { parseJournalMessage } from '$lib/parse-journal';
 import {
 	createChatSession,
 	D6eClientError,
-	deleteFile,
 	executeByIntent,
 	getChatSessionById,
 	updateChatSession,
@@ -101,16 +101,6 @@ function validatePersistAs(value: unknown): PersistKind | string {
 	if (value == null) return 'journal';
 	if (value === 'journal' || value === 'ask') return value;
 	return 'persistAs must be "journal" or "ask" when provided';
-}
-
-async function bestEffortCleanup(
-	callerTag: string,
-	accessToken: string,
-	refs: IntentInputFileRef[]
-): Promise<void> {
-	for (const ref of refs) {
-		await deleteFile(callerTag, accessToken, ref.fileId);
-	}
 }
 
 // crypto.randomUUID is available in both Node 20+ and modern browsers,
@@ -309,9 +299,6 @@ export const POST: RequestHandler = async (event) => {
 		return json(response);
 	} catch (err) {
 		if (err instanceof D6eClientError) {
-			if (!err.timedOut && !err.aborted && inputFileRefs.length > 0) {
-				await bestEffortCleanup(callerTag, accessToken, inputFileRefs);
-			}
 			return json(
 				{
 					error: err.message,
@@ -323,9 +310,6 @@ export const POST: RequestHandler = async (event) => {
 		}
 		const msg = err instanceof Error ? err.message : String(err);
 		console.error(`[${callerTag}] Unexpected error: ${msg}`);
-		if (inputFileRefs.length > 0) {
-			await bestEffortCleanup(callerTag, accessToken, inputFileRefs);
-		}
 		return json({ error: msg }, { status: 500 });
 	}
 };
