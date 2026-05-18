@@ -1,26 +1,64 @@
 <script lang="ts">
-	// Read-only journal table for AI-generated entries. The table is
-	// intentionally non-editable; users revise entries by submitting a
-	// natural-language comment which re-runs execute-by-intent (see
-	// revise-comment-form.svelte). If the LLM response could not be
-	// parsed into the JSON contract, this component renders a fallback
-	// banner. The raw text is treated as markdown so prose responses
-	// (headings, lists, tables) render the same way they do in the d6e
-	// chat UI; the "Raw AI response" disclosure still shows the
-	// untouched assistant text for debugging.
+	// Read-only journal / registration result card for assistant responses.
+	//
+	// Three branches:
+	//   1. parsed.kind === 'journal'       -> render the entries table and,
+	//      when a parent supplies onRegister, a "freee に登録" button below
+	//      the warnings. Edits are not allowed inline; the user revises via
+	//      revise-comment-form.svelte (the parent owns that flow).
+	//   2. parsed.kind === 'registration'  -> delegate to RegistrationResult
+	//      so the freee deal_ids, Drive uploads, warnings, and any
+	//      follow-up question are rendered in the same visual style.
+	//   3. parsed.kind === 'fallback'      -> show the markdown-rendered raw
+	//      assistant text. The card never goes blank even if the LLM ignored
+	//      the JSON contract entirely.
+	//
+	// The "Raw AI response" disclosure for the journal branch lives at the
+	// bottom of the card; the registration branch carries the same
+	// disclosure inside its own component for symmetry.
 
-	import { AlertTriangleIcon } from '@lucide/svelte';
+	import AlertTriangleIcon from '@lucide/svelte/icons/alert-triangle';
+	import LoaderCircleIcon from '@lucide/svelte/icons/loader-circle';
+	import SendIcon from '@lucide/svelte/icons/send';
 
+	import RegistrationResult from '$lib/components/registration-result.svelte';
 	import { renderMarkdown } from '$lib/markdown';
 	import * as m from '$lib/paraglide/messages.js';
 	import type { ParseResult } from '$lib/parse-journal';
 	import { cn, formatJpyAmount } from '$lib/utils';
 
-	let { parsed }: { parsed: ParseResult } = $props();
+	let {
+		parsed,
+		onRegister,
+		registerDisabled = false,
+		registerInFlight = false
+	}: {
+		parsed: ParseResult;
+		// Optional callback invoked when the user clicks the "freee に登録"
+		// button. Pages that should not expose registration (e.g. the
+		// completed-tasks detail dialog) simply omit this prop.
+		onRegister?: () => void | Promise<void>;
+		// Disables the register button regardless of state. Used while
+		// another network call (upload, revise) is in flight.
+		registerDisabled?: boolean;
+		// Replaces the button label with a spinner + localised loading text
+		// when true. Independent from registerDisabled so the parent can
+		// still show a busy state for "I am calling /api/intent right now".
+		registerInFlight?: boolean;
+	} = $props();
 
 	const renderedFallback = $derived(
 		parsed.kind === 'fallback' ? renderMarkdown(parsed.rawText) : ''
 	);
+
+	const showRegisterButton = $derived(
+		parsed.kind === 'journal' && typeof onRegister === 'function'
+	);
+
+	function handleRegisterClick(): void {
+		if (registerDisabled || registerInFlight) return;
+		void onRegister?.();
+	}
 </script>
 
 {#if parsed.kind === 'journal'}
@@ -75,11 +113,43 @@
 			</ul>
 		{/if}
 
+		{#if showRegisterButton}
+			<div class="space-y-2 rounded-lg border border-primary/30 bg-primary/5 p-3">
+				<div>
+					<h4 class="text-sm font-semibold text-foreground">{m.journal_register_heading()}</h4>
+					<p class="mt-1 text-xs text-muted-foreground">{m.journal_register_hint()}</p>
+				</div>
+				<div class="flex justify-end">
+					<button
+						type="button"
+						class={cn(
+							'inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm transition-colors',
+							registerDisabled || registerInFlight
+								? 'cursor-not-allowed opacity-60'
+								: 'hover:bg-primary/90'
+						)}
+						disabled={registerDisabled || registerInFlight}
+						onclick={handleRegisterClick}
+					>
+						{#if registerInFlight}
+							<LoaderCircleIcon class="size-4 animate-spin" aria-hidden="true" />
+							{m.journal_register_loading()}
+						{:else}
+							<SendIcon class="size-4" aria-hidden="true" />
+							{m.journal_register_button()}
+						{/if}
+					</button>
+				</div>
+			</div>
+		{/if}
+
 		<details class="rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground">
 			<summary class="cursor-pointer text-sm font-medium text-foreground">Raw AI response</summary>
 			<pre class="mt-2 break-words whitespace-pre-wrap">{parsed.rawText}</pre>
 		</details>
 	</div>
+{:else if parsed.kind === 'registration'}
+	<RegistrationResult {parsed} />
 {:else}
 	<div class="space-y-3 rounded-xl border border-warning/40 bg-warning/5 p-4">
 		<div class="flex items-center gap-2 text-warning-foreground">

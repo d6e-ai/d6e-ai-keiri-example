@@ -13,13 +13,26 @@
 	//      that comes back is stored so subsequent revise turns append
 	//      to the same row.
 	//   3. The assistant message is parsed via parse-journal; success
-	//      renders the journal table, failure falls back to raw markdown.
-	//   4. The "revise" form posts a follow-up message that embeds the
-	//      previous JSON inside <previous_journal> tags so the LLM knows
-	//      to regenerate rather than re-OCR. The same uploadedRefs are
-	//      re-sent so the model can re-examine the original receipts.
-	//      The same chatSessionId is passed so the server appends to
-	//      that row.
+	//      renders either the journal table (kind:"journal") or the
+	//      registration result card (kind:"registration"). Anything else
+	//      falls back to raw markdown.
+	//   4. The "revise" form posts a follow-up message. Its wrapping tag
+	//      depends on the current parse kind:
+	//        - kind:"journal"       -> <previous_journal>...</previous_journal>
+	//          so the LLM regenerates the entries instead of re-OCR.
+	//        - kind:"registration"  -> <additional_comment>...</additional_comment>
+	//          so the LLM treats it as a continuation of the registration
+	//          turn (e.g. user provided a company_id the LLM asked for).
+	//      The same uploadedRefs and chatSessionId are re-sent so the
+	//      server appends to the same chat_session row.
+	//   5. The "freee に登録" button (rendered inside JournalResult when
+	//      kind:"journal") triggers handleRegister(). It sends a fixed
+	//      registration-request message that wraps the previous journal
+	//      JSON inside <registration_request>...</registration_request> so
+	//      the LLM dispatches to scenario D (freee + Drive). The response
+	//      is parsed into kind:"registration" and rendered as a status
+	//      card; from there the user can keep talking to the LLM via the
+	//      revise form switched to followup mode.
 	//
 	// "Pending tasks" section is driven by the SSR loader in
 	// +page.server.ts (Promise streaming) which lists chat_session rows
@@ -55,6 +68,8 @@
 	const CREATE_PROMPT =
 		'添付した領収書画像を解析して、freee 登録用の仕訳一覧を作成してください。' +
 		'複数の領収書がある場合はすべて読み取って 1 つの仕訳一覧にまとめてください。';
+	const REGISTER_PROMPT_HEADER =
+		'下記の仕訳を freee に登録し、添付の領収書を Google Drive にアップロードしてください。';
 
 	let { data }: { data: PageData } = $props();
 
@@ -68,12 +83,23 @@
 	let deletesInFlight = $state(0);
 
 	let isExecuting = $state(false);
+	// Independent flag so the freee register button can show its own
+	// spinner / loading text inside the page banner while the rest of
+	// the page stays in the generic "isExecuting" state.
+	let registerInFlight = $state(false);
 	let errorMessage = $state<string | null>(null);
 	let currentChatSessionId = $state<string | null>(null);
 	let parseResult = $state<ParseResult | null>(null);
 
 	let detailOpen = $state(false);
 	let detailTask = $state<JournalTaskSummary | null>(null);
+
+	// The revise form switches between two modes depending on the most
+	// recent assistant payload kind. Derive it once so the form and the
+	// outgoing message wrapper stay in sync.
+	const reviseMode = $derived<'journal' | 'followup'>(
+		parseResult?.kind === 'registration' ? 'followup' : 'journal'
+	);
 
 	const hasUploadInFlight = $derived(pendingUploads.some((entry) => entry.status === 'uploading'));
 	const hasDeleteInFlight = $derived(deletesInFlight > 0);
@@ -294,24 +320,41 @@
 	}
 
 	async function handleRevise(comment: string): Promise<void> {
-		if (uploadedRefs.length === 0 || !parseResult || parseResult.kind !== 'journal') {
-			errorMessage = 'No previous journal to revise.';
+		if (uploadedRefs.length === 0 || !parseResult) {
+			errorMessage = 'No previous assistant response to revise.';
 			return;
 		}
 		errorMessage = null;
 		isExecuting = true;
 		try {
-			const previousJson = JSON.stringify(parseResult.result, null, 2);
-			const message = [
-				'前回生成した仕訳に対する修正依頼です。',
-				'<previous_journal>',
-				previousJson,
-				'</previous_journal>',
-				'',
-				`修正指示: ${comment}`,
-				'',
-				'仕訳全体を再生成し、変更を反映した完全な JSON を返してください。'
-			].join('\n');
+			let message: string;
+			if (parseResult.kind === 'journal') {
+				const previousJson = JSON.stringify(parseResult.result, null, 2);
+				message = [
+					'前回生成した仕訳に対する修正依頼です。',
+					'<previous_journal>',
+					previousJson,
+					'</previous_journal>',
+					'',
+					`修正指示: ${comment}`,
+					'',
+					'仕訳全体を再生成し、変更を反映した完全な JSON を返してください。'
+				].join('\n');
+			} else if (parseResult.kind === 'registration') {
+				message = [
+					'直前の freee 登録ターンへの追加コメントです。',
+					'<additional_comment>',
+					comment,
+					'</additional_comment>',
+					'',
+					'必要に応じて未完了の登録 / Drive アップロードを実行し、最新の状態を kind:"registration" JSON で返してください。'
+				].join('\n');
+			} else {
+				// fallback parseResult: rare, but keep the form usable so
+				// the user can nudge the LLM back on track instead of being
+				// stuck. Send the comment verbatim.
+				message = comment;
+			}
 
 			const { rawMessage, chatSessionId } = await callIntent(
 				message,
@@ -326,6 +369,41 @@
 			errorMessage = detail;
 			console.error('[ai-journal-page] handleRevise failed:', detail);
 		} finally {
+			isExecuting = false;
+		}
+	}
+
+	async function handleRegister(): Promise<void> {
+		if (uploadedRefs.length === 0 || !parseResult || parseResult.kind !== 'journal') {
+			errorMessage = 'No journal payload to register.';
+			return;
+		}
+		errorMessage = null;
+		isExecuting = true;
+		registerInFlight = true;
+		try {
+			const journalJson = JSON.stringify(parseResult.result, null, 2);
+			const message = [
+				REGISTER_PROMPT_HEADER,
+				'<registration_request>',
+				journalJson,
+				'</registration_request>'
+			].join('\n');
+
+			const { rawMessage, chatSessionId } = await callIntent(
+				message,
+				uploadedRefs,
+				currentChatSessionId
+			);
+			parseResult = parseJournalMessage(rawMessage);
+			if (chatSessionId) currentChatSessionId = chatSessionId;
+			await invalidateAll();
+		} catch (err) {
+			const detail = err instanceof Error ? err.message : String(err);
+			errorMessage = detail;
+			console.error('[ai-journal-page] handleRegister failed:', detail);
+		} finally {
+			registerInFlight = false;
 			isExecuting = false;
 		}
 	}
@@ -415,7 +493,7 @@
 			class="flex items-center gap-3 rounded-xl border bg-card p-4 text-sm text-muted-foreground shadow-sm"
 		>
 			<LoaderCircleIcon class="size-5 animate-spin text-primary" aria-hidden="true" />
-			<span>{m.journal_loading()}</span>
+			<span>{registerInFlight ? m.journal_register_loading() : m.journal_loading()}</span>
 		</div>
 	{/if}
 
@@ -436,9 +514,14 @@
 
 	{#if parseResult}
 		<section class="space-y-4">
-			<JournalResult parsed={parseResult} />
-			{#if parseResult.kind === 'journal'}
-				<ReviseCommentForm onsubmit={handleRevise} disabled={isExecuting} />
+			<JournalResult
+				parsed={parseResult}
+				onRegister={handleRegister}
+				registerDisabled={isExecuting}
+				{registerInFlight}
+			/>
+			{#if parseResult.kind === 'journal' || parseResult.kind === 'registration'}
+				<ReviseCommentForm onsubmit={handleRevise} disabled={isExecuting} mode={reviseMode} />
 			{/if}
 		</section>
 	{/if}

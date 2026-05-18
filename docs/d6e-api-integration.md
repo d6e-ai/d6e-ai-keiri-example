@@ -314,6 +314,101 @@ and
 which in turn call helpers in
 [`src/lib/server/d6e-client.ts`](../src/lib/server/d6e-client.ts).
 
+## 6. External SaaS API access — `d6e_call_external_api` (MCP tool)
+
+**Hosted by:** the d6e MCP server, exposed indirectly via the SaaS proxy
+in the d6e Rust API. This sample app **does not call the proxy
+directly**; instead, the LLM running inside `execute-by-intent` invokes
+the MCP tool when the workspace prompt asks it to.
+
+**Tool signature (relevant fields):**
+
+```ts
+d6e_call_external_api({
+	provider: 'freee' | 'google_workspace' | ...,
+	method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
+	path: '/api/1/deals',
+	body?: { ... },
+	file_id?: '<d6e storage UUID>'  // upload binary as request body
+});
+```
+
+When `file_id` is set, the d6e Rust API resolves the storage file and
+streams its bytes as the request body (raw binary for `uploadType=media`,
+multipart/related metadata + binary for `uploadType=multipart`). This is
+how the Drive upload step works without re-fetching the receipt image
+through the LLM.
+
+OAuth tokens for `freee` and `google_workspace` are stored encrypted in
+d6e's `saas_credential` table per workspace. The proxy refreshes them
+when needed (with `SELECT FOR UPDATE` to avoid race conditions). The
+LLM never sees the tokens themselves; it only sees response bodies.
+
+**Why this app does not call the proxy directly:**
+
+The integration is entirely prompt-driven. The "freee に登録" button
+on the AI Journal page sends a fixed natural-language message wrapped in
+`<registration_request>...</registration_request>` to `/api/intent`; the
+Scenario D content (appended into the same workspace prompt rule via
+`scripts/prompts/freee-registration-prompt.md` — see
+[docs/llm-output-contract.md](./llm-output-contract.md) for the
+activation flow) instructs the LLM to call `d6e_call_external_api`
+against `freee` and `google_workspace`. Keeping the orchestration inside
+the prompt means the same backend works for the Slack / Discord / LINE
+proxies without any code changes here.
+
+**Activating Scenario D:**
+
+Scenario D is appended to the existing workspace prompt rule by the d6e
+AI itself. When the user pastes
+[`scripts/prompts/freee-registration-prompt.md`](../scripts/prompts/freee-registration-prompt.md)
+into the d6e chat UI, the receiving model uses these MCP tools to
+perform a short interactive discovery before the actual rule update:
+
+- `d6e_list_workspace_prompt_rules` — locate the rule that currently
+  carries Scenarios A/B/C.
+- `d6e_list_saas_credentials` — confirm both `freee` and
+  `google_workspace` are still connected.
+- `d6e_call_external_api` — call `GET /api/1/companies` (freee) and
+  `GET /drive/v3/files?q=...folder...` (Google Drive root) so the
+  model can ask the user **which company** and **which Drive folder**
+  to bake into Scenario D. The chosen IDs are substituted into the
+  template's `{{company_id}}` / `{{drive_folder_id}}` placeholders
+  before the rule is written.
+- `d6e_update_workspace_prompt_rule` — insert the now-concrete
+  Scenario D body into the rule **immediately before the
+  `## 共通ルール` heading** (i.e. directly after Scenario C). This
+  keeps A/B/C/D as a contiguous block of task scenarios; the shared
+  rules below apply to all four. Scenarios A/B/C themselves are left
+  byte-identical.
+
+Because the company and folder selections are resolved **at activation
+time** (not at every "freee に登録" click), the runtime LLM no longer
+needs to hit `GET /api/1/companies` or to ask the user where to upload
+the receipt — the values are already in the prompt. At runtime the LLM
+still uses `d6e_call_external_api` to:
+
+- list accounting items (`GET /api/1/account_items`) and tax codes
+  (`GET /api/1/taxes/codes`) for the bound company,
+- create a deal per entry (`POST /api/1/deals`),
+- ensure the `YYYY/MM/` Drive sub-folder under the bound parent folder
+  exists (using `GET /drive/v3/files` and `POST /drive/v3/files`,
+  creating year/month folders on demand), then
+- upload the receipt
+  (`POST /upload/drive/v3/files?uploadType=multipart` with `file_id`).
+
+This avoids a separate REST round-trip from this app and keeps the
+sample's `npm run init` script unchanged (it still registers only the
+base `ai-keiri-prompt.md`). To rebind the company or folder later, the
+user removes the `### シナリオ D` section from the d6e admin UI and
+pastes the activation file again.
+
+**Upstream references:**
+
+- MCP tool descriptor: [d6e `packages/mcp/src/server/mod.rs`](https://github.com/d6e-ai/d6e/blob/main/packages/mcp/src/server/mod.rs)
+- Proxy implementation: [d6e `packages/api/src/routes/v1/saas_proxy.rs`](https://github.com/d6e-ai/d6e/blob/main/packages/api/src/routes/v1/saas_proxy.rs)
+- Provider catalog: [d6e `packages/frontend/src/lib/saas-providers/catalog.ts`](https://github.com/d6e-ai/d6e/blob/main/packages/frontend/src/lib/saas-providers/catalog.ts)
+
 ## Auth model summary
 
 | Endpoint                                              | Header / Body                          | Source                                                                  |
