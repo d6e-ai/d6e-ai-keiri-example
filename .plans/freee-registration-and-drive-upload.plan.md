@@ -8,17 +8,57 @@ LLM 応答は新スキーマ `kind: "registration"` で構造化し、UI に登�
 運用面の揺れ（company_id、Drive フォルダ等）は LLM 側で対話確認させ、フォローアップは
 既存 Revise フォームを汎用化して受ける。
 
-## 運用上の決定事項（プラン v2 で更新）
+## 運用上の決定事項（プラン v4 で更新）
 
 workspace prompt rule は最終的に **1 件のまま** とする。シナリオ A/B/C は引き続き
 `ai-keiri-prompt.md`（`npm run init` で登録）が担い、シナリオ D（freee 登録 + Drive 保存）は
 `freee-registration-prompt.md` の中身を **d6e のチャット UI に貼り付け**、d6e AI に
-`d6e_list_workspace_prompt_rules` + `d6e_update_workspace_prompt_rule` で既存ルールの末尾に
-追記してもらう運用にする。シナリオ D の追記前でもサンプルアプリの仕訳生成・修正・経理質問は
+`d6e_list_workspace_prompt_rules` + `d6e_update_workspace_prompt_rule` で既存ルールに
+挿入してもらう運用にする。シナリオ D の追記前でもサンプルアプリの仕訳生成・修正・経理質問は
 壊れずに動く（「freee に登録」ボタンを押すと fallback UI に落ちる）。
 
 そのため `freee-registration-prompt.md` は「2 つ目の workspace prompt rule」ではなく、
-**d6e AI 向けの編集指示書 + シナリオ D 本文** という二層構造で書く。
+**d6e AI 向けの編集指示書 + シナリオ D 本文テンプレート** という二層構造で書く。
+
+### v3: 追記時に探索 → 具体化
+
+「事業所」「Drive 保存先フォルダ」をワークスペースごとに 1 つ固定したいという要件に合わせ、
+貼り付け後の対話で次を実行する。
+
+1. `d6e_list_saas_credentials` で freee / google_workspace の `enabled` を確認。
+2. `d6e_call_external_api` で `GET /api/1/companies`（freee）を叩き、結果をユーザーに見せて
+   採用する `company_id` を確定。
+3. `d6e_call_external_api` で `GET /drive/v3/files`（Google Drive ルート直下のフォルダ）を叩き、
+   結果をユーザーに見せて領収書保存先 `drive_folder_id` を確定（または「ルート直下」を選択）。
+4. テンプレートの `{{company_id}}` / `{{drive_folder_id}}` 等を確定値で **置換** し、その具体化
+   済み本文を rule に書き込む。
+5. 実行時（「freee に登録」押下時）の LLM は、追記済みの固定値をそのまま使用する。`GET
+   /api/1/companies` を再度呼ぶ必要も、`needs_input` で事業所選択を求める必要もなくなる。
+
+つまり、サンプルアプリ実行時に毎回 `needs_input` で停止して事業所選択を求める初期案 (v2) を
+廃し、**「ワークスペースは 1 法人 + 1 領収書親フォルダ」という前提を rule に焼き込む** 構成に
+変更した。
+
+### v4: 挿入位置・月別サブフォルダ・`type` 判定ロジック
+
+実際に d6e AI に貼り付けて生成された rule をレビューした結果、次の改善を加える。
+
+1. **挿入位置を厳密化**: 末尾追記ではなく、既存 rule 内の `## 共通ルール` 見出しの **直前**
+   （シナリオ C の直後）にシナリオ D を **挿入** する運用に変更。これによりタスク種別
+   A/B/C/D が連続したセクションとして並び、共通ルールはその下にまとめて適用される論理構造に
+   なる。`## 共通ルール` 見出しを `String.indexOf` 相当で探索し、`head + scenario_d + "\n\n"
+   + tail` に再構成する。見出しが無い場合のみ末尾追記にフォールバックし `warnings` に明記。
+2. **月別サブフォルダの自動作成**: 領収書は親フォルダ直下ではなく
+   `<親フォルダ>/YYYY/MM/` の階層に保存する。年・月フォルダは存在しなければ自動作成
+   （`POST /drive/v3/files` で `mimeType=application/vnd.google-apps.folder`）。日付選択は
+   `entries[].date` の最小値（ISO 文字列として）。親フォルダの 404 は致命的で `needs_input`、
+   年・月フォルダの不在は非エラー（自動作成）として扱う。
+3. **`type` 判定ロジックの強化**: `description` 推測ベースではなく、貸方科目が収益系
+   （売上高 / 雑収入 / 受取手数料 / 受取利息 / 受取配当金 / 受取家賃 / 為替差益 など）の
+   場合に `"income"`、それ以外（経費仕訳・買掛金計上・資産取得など）は `"expense"`。
+   振替仕訳（現金 → 普通預金 など）はサンプルアプリでは `"expense"` をデフォルトとし、
+   `warnings` に「振替仕訳のため `type=expense` で登録しました」と明記して freee 上での
+   再分類をユーザーに委ねる。
 
 ## 設計の根拠
 
@@ -108,26 +148,43 @@ d6e AI に既存 rule への追記を依頼するための「マージ指示書�
 
 - ファイル名と置き場所は `scripts/prompts/` の下のまま。ただし **`npm run init` の登録対象外**。
 - 構成は二層:
-  1. **d6e AI 向けの編集指示書**（冒頭）。
-     d6e のチャット UI に貼り付けると、受け取った d6e AI が
-     `d6e_list_workspace_prompt_rules` → 対象 rule 特定 → idempotency チェック → ユーザー確認 →
-     既存 `content` の末尾にシナリオ D を `\n\n` 区切りで追記 → `d6e_update_workspace_prompt_rule`
-     で保存、という手順を踏む。シナリオ A/B/C の本文には一切触れない／他 workspace の rule にも
-     触れない、というガードレールも明記する。
-  2. **追記する本文（シナリオ D）**（後段）。
+  1. **d6e AI 向けの編集指示書 + 探索手順**（冒頭）。
+     d6e のチャット UI に貼り付けると、受け取った d6e AI が次の 10 ステップを踏む。
+     1. `d6e_list_workspace_prompt_rules` で既存 rule 一覧を取得
+     2. シナリオ A/B/C を含む対象 rule を特定（複数該当時はユーザーに選択させる）
+     3. `### シナリオ D` の冪等性チェック
+     4. `d6e_list_saas_credentials` で freee / google_workspace の `enabled` を確認
+     5. `d6e_call_external_api` で `GET /api/1/companies` を呼び、ユーザーに事業所を選ばせ
+        `company_id` / `company_name` を確定
+     6. `d6e_call_external_api` で `GET /drive/v3/files?q=...folder...` を呼び、マイドライブ
+        ルート直下のフォルダ一覧から保存先を選ばせ `drive_folder_id` / `drive_folder_name` を確定
+        （または「ルート直下」「新規フォルダ作成」を選択肢に含める）
+     7. テンプレート本文の `{{company_id}}` / `{{company_name}}` / `{{drive_folder_id}}` /
+        `{{drive_folder_name}}` / `{{generated_at}}` を確定値で置換
+     8. 具体化済みのシナリオ D 本文をユーザーに提示して最終確認
+     9. `d6e_update_workspace_prompt_rule` で既存 `content` 末尾に `\n\n` + 具体化本文を追記
+     10. 完了報告
+     ガードレール: シナリオ A/B/C の本文を一切変更しない／他 workspace の rule に触れない／
+     探索フェーズは原則 `GET` のみ（Drive フォルダ新規作成のみ明示同意ありで許容）／
+     プレースホルダ `{{...}}` の置換漏れを残さない。
+  2. **追記する本文テンプレート（シナリオ D）**（後段）。
+     - 冒頭に「このセクションのワークスペース固有値」ブロック（`{{company_name}}` /
+       `{{company_id}}` / `{{drive_folder_name}}` / `{{drive_folder_id}}` / `{{generated_at}}`）
+       を置く。
      - トリガ条件は「`<registration_request>` または `<additional_comment>` タグを含むメッセージ」。
      - 「同じ rule の前半（共通ルール）末尾の『ツールを呼ぶ必要はありません』はシナリオ D には
        適用外」と明記して打ち消す。
-     - 手順:
-       1. `d6e_list_saas_credentials` で freee / google_workspace の `enabled` を確認。未連携ならその旨を
-          `warnings` に入れて即返す。
-       2. freee: `GET /api/1/companies` → `GET /api/1/account_items` → `GET /api/1/taxes/codes`
-          → 仕訳行ごとに `POST /api/1/deals`。
-       3. Drive: 添付ファイル ID を `d6e_call_external_api` で
-          `POST /upload/drive/v3/files?uploadType=multipart`、metadata `{ "name": filename }` でアップロード。
-          フォルダ指定は基本ルートだが、ユーザーから指定があればそれに従う。
-       4. 不足情報（事業所が複数ある、勘定科目が一意に決まらない、Drive フォルダ指定が欲しい等）は
-          `status: "needs_input"` で停止して質問を返す。
+     - 実行時の手順:
+       1. `d6e_list_saas_credentials` で連携状態の health check。
+       2. 事業所は **固定** `company_id = {{company_id}}` を使用（`<additional_comment>` で明示
+          上書きが来た場合のみ本ターン限定で上書き）。
+       3. freee: `GET /api/1/account_items` → `GET /api/1/taxes/codes` → 仕訳行ごとに
+          `POST /api/1/deals`。
+       4. Drive: `POST /upload/drive/v3/files?uploadType=multipart`、`parents` は固定の
+          `{{drive_folder_id}}`（`null` なら `parents` 省略）。
+       5. 勘定科目が freee マスタに一意に決まらない等の現ターン固有の確認が必要な場合だけ
+          `status: "needs_input"` で停止して質問を返す（事業所・Drive フォルダは追記時に
+          固定済みなので、これらでの `needs_input` は基本発生しない）。
      - 「`kind: "registration"` のスキーマは必ず守る。エラー時も JSON フェンス内に
        `kind: "registration", status: "failed"` で返し、自然文だけにしない」を入れる。
 - 既存 `ai-keiri-prompt.md` には触らない（仕訳作成・修正・経理質問の単一情報源として保つ）。
@@ -202,24 +259,42 @@ d6e AI に既存 rule への追記を依頼するための「マージ指示書�
 4. **未追記の状態で**「freee に登録」ボタンを押下 → `kind: "registration"` JSON が返らず
    fallback UI に落ちることを確認（期待動作）。
 5. `scripts/prompts/freee-registration-prompt.md` の全文を d6e のチャット UI に貼り付ける。
-6. d6e AI が `d6e_list_workspace_prompt_rules` で対象 rule を特定、ユーザーに追記内容を提示・確認を取り、
-   `d6e_update_workspace_prompt_rule` で既存 rule の末尾にシナリオ D を追記する。完了報告まで対話が
-   成立することを確認。
-7. d6e admin UI の Prompt rules 画面で、rule が 1 件のまま、本文末尾に
-   `### シナリオ D: freee 仕訳登録 + Google Drive 領収書保存` セクションが含まれていることを確認。
+6. d6e AI が次の対話を順に行うことを確認:
+   - 対象 rule の特定と冪等性チェック
+   - `d6e_list_saas_credentials` での freee / google_workspace 確認
+   - `GET /api/1/companies` の結果から「対象事業所はどれにしますか？」と質問
+   - 事業所を選択
+   - `GET /drive/v3/files?q=...folder...` の結果から「Drive 保存先はどこにしますか？」と質問
+   - フォルダを選択（または「ルート直下」を選択）
+   - 具体化済みシナリオ D のプレビューを表示し、最終確認
+   - `d6e_update_workspace_prompt_rule` で追記
+   - 完了報告
+7. d6e admin UI の Prompt rules 画面で、rule が 1 件のまま、`### シナリオ D` セクションが
+   `### シナリオ C` の直後・`## 共通ルール` の直前に **挿入** されていること、そして
+   `{{company_id}}` や `{{drive_folder_id}}` などの **プレースホルダが残っていない** ことを
+   確認。
 8. サンプルアプリに戻り「freee に登録」ボタンを再度押下、`status: "success"` で deal_id と
-   Drive リンクが表示されることを確認。
-9. もう一度同じファイルを d6e チャットに貼り付け、d6e AI が「既に追記済みなのでスキップしました」と
-   冪等にスキップすることを確認。
-10. 一旦 d6e 管理画面で freee 連携を切る → 同じ操作で `status: "failed"` と warnings に
+   Drive リンクが表示されることを確認。実行時の LLM は事業所選択を求めず、固定 `company_id` を
+   `freee.company_id` にそのまま返してくることを確認。Drive の保存先が
+   `<親フォルダ>/YYYY/MM/` 階層になっていること（年・月フォルダが自動作成された場合は
+   `warnings` にその旨が記録されること）も確認。
+9. 売上計上仕訳（借方=現金 / 貸方=売上高 など）の領収書も登録してみて、`type` が `"income"` に
+   なっていることを確認。
+10. もう一度同じファイルを d6e チャットに貼り付け、d6e AI が「既に追記済みなのでスキップしました」と
+    冪等にスキップすることを確認。
+11. 一旦 d6e 管理画面で freee 連携を切る → 同じ操作で `status: "failed"` と warnings に
     未連携メッセージが入ることを確認。
-11. 事業所が複数あるアカウントで `status: "needs_input"` が返ること、Revise フォームで
-    「事業所 ID 1234 を使ってください」と返信→ 続行が成功することを確認。
+12. Revise フォームで「事業所 ID 5678 を使ってください」と返信した場合、本ターン限定でその ID が
+    使われ、`warnings` に上書きが記録され、次のターンでは再び固定 ID に戻ることを確認。
+13. Drive で保存先親フォルダを削除した状態で再度「freee に登録」を押下 → `status: "needs_input"`
+    で「保存先親フォルダが見つかりません。再選択してください」と返ること、d6e チャットでシナリオ D
+    セクションを削除して再貼り付けすると新フォルダで固定し直せることを確認。
 
 ## 前提と非スコープ
 
 - workspace prompt rule は最終的に **1 件のまま**。シナリオ A/B/C は `ai-keiri-prompt.md`
-  （`npm run init` で登録）、シナリオ D は d6e AI が同じ rule の末尾に追記して有効化する。
+  （`npm run init` で登録）、シナリオ D は d6e AI が同じ rule の `## 共通ルール` 直前に
+  挿入して有効化する。
 - このリポジトリの `npm run init` は既存ファイル 1 本のみを登録するふるまいを維持する。
   `freee-registration-prompt.md` は d6e のチャット UI に貼り付ける用のソースであり、init では
   登録しない。`scripts/init-workspace.mjs` には触らない。

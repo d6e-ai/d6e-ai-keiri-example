@@ -21,11 +21,18 @@ registered by `npm run init` from
 - Scenarios A / B / C ship out of the box with that rule.
 - Scenario D is **optional** and is appended to the same rule on demand
   by pasting [`scripts/prompts/freee-registration-prompt.md`](../scripts/prompts/freee-registration-prompt.md)
-  into the d6e chat UI. The d6e AI then uses
-  `d6e_list_workspace_prompt_rules` to locate the rule that already
-  contains scenarios A/B/C and `d6e_update_workspace_prompt_rule` to
-  append scenario D to its `content`. See
-  [Scenario D activation](#scenario-d-activation-optional) below.
+  into the d6e chat UI. The d6e AI:
+  - calls `d6e_list_saas_credentials` to confirm both freee and
+    google_workspace are connected,
+  - calls `d6e_call_external_api` against freee (`GET /api/1/companies`)
+    and Google Drive (`GET /drive/v3/files` for root folders) so it can
+    ask the user **which company and which Drive folder** to use,
+  - substitutes those confirmed values into Scenario D's template
+    (`{{company_id}}`, `{{drive_folder_id}}`, …), then
+  - uses `d6e_list_workspace_prompt_rules` /
+    `d6e_update_workspace_prompt_rule` to append the now-concrete
+    Scenario D body to the existing rule's `content`.
+  See [Scenario D activation](#scenario-d-activation-optional) below.
 
 Before scenario D is appended the registration button still renders, but
 pressing it produces a `fallback` parse (the LLM does not know the
@@ -220,14 +227,32 @@ message that triggers Scenario D:
 
 The LLM is expected to:
 
-1. Confirm freee / google_workspace are connected (`d6e_list_saas_credentials`).
-2. Resolve `company_id` / `account_item_id` / `tax_code` against the
-   freee API (`GET /api/1/companies` etc.).
-3. Create deals (`POST /api/1/deals`) and upload the receipt to Google
-   Drive (`POST /upload/drive/v3/files?uploadType=multipart` with
-   `file_id`).
-4. Return a single `kind: "registration"` JSON block describing what
-   actually happened.
+1. Confirm freee / google_workspace are still connected
+   (`d6e_list_saas_credentials`).
+2. Use the **pre-confirmed** `company_id` and `drive_folder_id` baked
+   into Scenario D at activation time (see
+   [Scenario D activation](#scenario-d-activation-optional)). It only
+   has to resolve `account_item_id` / `tax_code` against the freee API
+   (`GET /api/1/account_items`, `GET /api/1/taxes/codes`) for the
+   current company.
+3. Create deals (`POST /api/1/deals`) using `type: "income"` when the
+   journal's credit account is a revenue line (売上高, 雑収入, etc.)
+   and `type: "expense"` otherwise.
+4. Upload the receipt to Google Drive. Files land in
+   `<pre-confirmed parent folder>/YYYY/MM/` — the LLM creates the
+   `YYYY` and `MM` folders on demand using `GET /drive/v3/files` and
+   `POST /drive/v3/files`, then performs the actual upload via
+   `POST /upload/drive/v3/files?uploadType=multipart` with `file_id`.
+   The `YYYY` / `MM` segments come from the smallest `entries[].date`
+   in the journal.
+5. Return a single `kind: "registration"` JSON block describing what
+   actually happened (including a warning when a `YYYY` / `MM`
+   sub-folder was freshly created so the user can see Drive structure
+   changes).
+
+Because the company/folder selection is no longer a runtime decision,
+`status: "needs_input"` is rare in practice — the typical reason left is
+an ambiguous account name in the current journal.
 
 The receipt file ID is re-sent in `inputFileRefs` so the LLM has direct
 access to the binary again (same mechanism that powers the original
@@ -241,20 +266,50 @@ flow (Scenarios A/B/C) works end-to-end without it. To turn on the
 
 1. Open [`scripts/prompts/freee-registration-prompt.md`](../scripts/prompts/freee-registration-prompt.md) and copy the whole file.
 2. Paste it into the d6e chat UI for the target workspace.
-3. The d6e AI follows the embedded instructions:
-   - calls `d6e_list_workspace_prompt_rules` to find the rule that
-     already contains Scenarios A/B/C,
-   - performs an idempotency check on the `### シナリオ D` heading,
-   - appends the Scenario D body to that rule's `content`,
-   - calls `d6e_update_workspace_prompt_rule` to save it.
+3. The d6e AI follows the embedded instructions and walks through these
+   phases (the user only has to answer a couple of multiple-choice
+   questions in the chat):
+   1. **Locate the rule** — calls `d6e_list_workspace_prompt_rules`,
+      finds the rule that already contains Scenarios A/B/C, and bails
+      out idempotently if `### シナリオ D` is already present.
+   2. **Health check** — calls `d6e_list_saas_credentials` and confirms
+      both `freee` and `google_workspace` are `enabled`.
+   3. **Discover freee company** — calls
+      `d6e_call_external_api` → `GET /api/1/companies`. With one
+      company it just asks for confirmation; with several it asks the
+      user to pick one. The chosen `id` becomes the value bound to
+      `{{company_id}}`.
+   4. **Discover Drive folder** — calls
+      `d6e_call_external_api` → `GET /drive/v3/files?q=...folder...` to
+      list folders in My Drive's root, and offers the user (a) pick one
+      of the listed folders, (b) save to My Drive root, or (c) create a
+      new folder via `POST /drive/v3/files`. The chosen ID (or `null`
+      for "root") becomes `{{drive_folder_id}}`.
+   5. **Substitute & confirm** — fills in the placeholders
+      (`{{company_id}}`, `{{company_name}}`, `{{drive_folder_id}}`,
+      `{{drive_folder_name}}`, `{{generated_at}}`), shows the resulting
+      Scenario D body to the user inside a code fence, and asks for a
+      final OK.
+   6. **Insert** — calls `d6e_update_workspace_prompt_rule` to write
+      the existing content with Scenario D **inserted just before the
+      `## 共通ルール` heading** (i.e. directly after Scenario C). This
+      keeps A/B/C/D as a contiguous block of task scenarios and lets
+      the shared rules below apply to all four. `sort_order` is left
+      untouched. If the `## 共通ルール` heading cannot be located, the
+      d6e AI falls back to appending Scenario D at the end of the
+      content and warns the user.
 4. From this point on, the registration button on the AI Journal page
-   produces a `kind: "registration"` JSON payload instead of falling
-   back to raw text.
+   produces a `kind: "registration"` JSON payload that reuses the
+   pre-confirmed company and Drive folder on every press, instead of
+   asking the user again at runtime.
 
-To remove Scenario D, either delete the rule and re-run `npm run init`,
-or edit the rule from `Settings > Workspace > Prompt rules` and strip
-the Scenario D section. The same `freee-registration-prompt.md` will
-also report "already present, skipped" if you paste it twice.
+To change the bound values, either edit the rule directly from
+`Settings > Workspace > Prompt rules` and adjust the `{{company_id}}` /
+`{{drive_folder_id}}` lines, or delete the entire `### シナリオ D`
+section and paste `freee-registration-prompt.md` again to redo the
+discovery flow. The instruction sheet always performs an idempotency
+check on the `### シナリオ D` heading, so re-pasting it without first
+deleting the section is a no-op.
 
 ## Tuning checklist
 
