@@ -19,8 +19,8 @@
 //     every ${D6E_BASE_URL} Bearer endpoint expects. Returns null when
 //     there is no session or refresh failed (caller should redirect
 //     to /auth/login).
-//   - OAUTH_STATE_COOKIE / readOauthStateCookie() / writeOauthStateCookie()
-//     / clearOauthStateCookie() handle the short-lived CSRF state for
+//   - readOauthStateCookie() / writeOauthStateCookie() /
+//     clearOauthStateCookie() handle the short-lived CSRF state for
 //     the /auth/login -> /auth/callback round-trip.
 //
 // Limitations:
@@ -46,7 +46,7 @@ import {
 const ACCESS_TOKEN_COOKIE = 'auth-access';
 const REFRESH_TOKEN_COOKIE = 'auth-refresh';
 const USER_COOKIE = 'auth-user';
-export const OAUTH_STATE_COOKIE = 'auth-oauth-state';
+const OAUTH_STATE_COOKIE = 'auth-oauth-state';
 
 // Refresh the access token this many milliseconds before its real exp
 // so a slow upstream call cannot race the expiry.
