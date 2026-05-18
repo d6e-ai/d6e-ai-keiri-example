@@ -196,7 +196,12 @@ export async function loadSession(event: RequestEvent): Promise<Session | null> 
 
 	if (accessToken) {
 		const expMs = decodeJwtExpMs(accessToken);
-		const expiresSoon = expMs !== null && expMs - Date.now() <= REFRESH_GRACE_MS;
+		// A null exp means the JWT lacks a parseable expiry claim. Treat
+		// it as "expires now" rather than "permanently fresh" so we still
+		// attempt a proactive refresh; otherwise a malformed token would
+		// keep flowing to d6e and fail with 401 until the cookie naturally
+		// expires.
+		const expiresSoon = expMs === null || expMs - Date.now() <= REFRESH_GRACE_MS;
 		if (!expiresSoon) {
 			// Access token is still good. Fall back to claims if we lost
 			// the user cookie for some reason.

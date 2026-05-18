@@ -134,9 +134,23 @@
 	}
 
 	async function handleRemove(fileId: string): Promise<void> {
-		const target = uploadedRefs.find((ref) => ref.fileId === fileId);
-		if (!target) return;
+		const targetIndex = uploadedRefs.findIndex((ref) => ref.fileId === fileId);
+		if (targetIndex === -1) return;
+		const target = uploadedRefs[targetIndex];
 		uploadedRefs = uploadedRefs.filter((ref) => ref.fileId !== fileId);
+
+		// Restore the entry to its original position when the server-side
+		// delete fails so the user can retry; otherwise the file would
+		// disappear from the UI while still occupying d6e Storage.
+		const restore = () => {
+			if (uploadedRefs.some((ref) => ref.fileId === fileId)) return;
+			const insertAt = Math.min(targetIndex, uploadedRefs.length);
+			uploadedRefs = [
+				...uploadedRefs.slice(0, insertAt),
+				target,
+				...uploadedRefs.slice(insertAt)
+			];
+		};
 
 		try {
 			const response = await fetch(`/api/upload/${encodeURIComponent(fileId)}`, {
@@ -146,11 +160,13 @@
 				const detail = `HTTP ${response.status}`;
 				errorMessage = m.journal_upload_remove_failed();
 				console.error('[ai-journal-page] handleRemove failed:', detail);
+				restore();
 			}
 		} catch (err) {
 			const detail = err instanceof Error ? err.message : String(err);
 			errorMessage = m.journal_upload_remove_failed();
 			console.error('[ai-journal-page] handleRemove network error:', detail);
+			restore();
 		}
 	}
 
