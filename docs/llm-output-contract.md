@@ -13,11 +13,23 @@ drifts off-contract.
 
 ## Scenarios
 
-The prompt classifies every turn into one of four buckets. A/B/C are
-defined in [`scripts/prompts/ai-keiri-prompt.md`](../scripts/prompts/ai-keiri-prompt.md)
-(workspace prompt rule #1). D is defined in
-[`scripts/prompts/freee-registration-prompt.md`](../scripts/prompts/freee-registration-prompt.md)
-(workspace prompt rule #2, registered manually in the d6e admin UI).
+The prompt classifies every turn into one of four buckets. All four are
+ultimately served by **the same single workspace prompt rule** — the one
+registered by `npm run init` from
+[`scripts/prompts/ai-keiri-prompt.md`](../scripts/prompts/ai-keiri-prompt.md).
+
+- Scenarios A / B / C ship out of the box with that rule.
+- Scenario D is **optional** and is appended to the same rule on demand
+  by pasting [`scripts/prompts/freee-registration-prompt.md`](../scripts/prompts/freee-registration-prompt.md)
+  into the d6e chat UI. The d6e AI then uses
+  `d6e_list_workspace_prompt_rules` to locate the rule that already
+  contains scenarios A/B/C and `d6e_update_workspace_prompt_rule` to
+  append scenario D to its `content`. See
+  [Scenario D activation](#scenario-d-activation-optional) below.
+
+Before scenario D is appended the registration button still renders, but
+pressing it produces a `fallback` parse (the LLM does not know the
+`<registration_request>` tag yet) — that is expected.
 
 | Scenario | Trigger                                                                                                                                              | Required output                                                       |
 | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
@@ -221,19 +233,41 @@ The receipt file ID is re-sent in `inputFileRefs` so the LLM has direct
 access to the binary again (same mechanism that powers the original
 journal generation).
 
+## Scenario D activation (optional)
+
+Scenario D is **not** registered by `npm run init`. The journal generation
+flow (Scenarios A/B/C) works end-to-end without it. To turn on the
+"freee に登録" button:
+
+1. Open [`scripts/prompts/freee-registration-prompt.md`](../scripts/prompts/freee-registration-prompt.md) and copy the whole file.
+2. Paste it into the d6e chat UI for the target workspace.
+3. The d6e AI follows the embedded instructions:
+   - calls `d6e_list_workspace_prompt_rules` to find the rule that
+     already contains Scenarios A/B/C,
+   - performs an idempotency check on the `### シナリオ D` heading,
+   - appends the Scenario D body to that rule's `content`,
+   - calls `d6e_update_workspace_prompt_rule` to save it.
+4. From this point on, the registration button on the AI Journal page
+   produces a `kind: "registration"` JSON payload instead of falling
+   back to raw text.
+
+To remove Scenario D, either delete the rule and re-run `npm run init`,
+or edit the rule from `Settings > Workspace > Prompt rules` and strip
+the Scenario D section. The same `freee-registration-prompt.md` will
+also report "already present, skipped" if you paste it twice.
+
 ## Tuning checklist
 
 If the model drifts off-contract, work through these in order:
 
-1. **Did the prompt rules register correctly?**
+1. **Did the prompt rule register correctly?**
    Visit the d6e frontend `Settings > Workspace > Prompt rules` and
-   confirm BOTH prompt rules are listed:
-   - `scripts/prompts/ai-keiri-prompt.md` (Scenarios A/B/C). Re-run
-     `npm run init` if it is missing.
-   - `scripts/prompts/freee-registration-prompt.md` (Scenario D). This
-     one is registered manually in the d6e admin UI because the freee /
-     google_workspace connection state is verified there as well. The
-     repository's `npm run init` does not register it.
+   confirm a single rule whose body starts with the `# d6e AI 経理 -
+   ワークスペースプロンプト` header is listed. Re-run `npm run init` if it
+   is missing.
+   - If you also need Scenario D, confirm the same rule's body ends with
+     a `### シナリオ D: freee 仕訳登録 + Google Drive 領収書保存` section
+     (added by the activation flow described above).
 
 2. **Is the model emitting markdown around the JSON?**
    The fence regex tolerates leading/trailing prose, so a sentence or

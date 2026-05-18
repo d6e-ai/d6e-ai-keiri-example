@@ -266,11 +266,30 @@ LLM never sees the tokens themselves; it only sees response bodies.
 The integration is entirely prompt-driven. The "freee に登録" button
 on the AI Journal page sends a fixed natural-language message wrapped in
 `<registration_request>...</registration_request>` to `/api/intent`; the
-Scenario D prompt (`scripts/prompts/freee-registration-prompt.md`)
-instructs the LLM to call `d6e_call_external_api` against `freee` and
-`google_workspace`. Keeping the orchestration inside the prompt means
-the same backend works for the Slack / Discord / LINE proxies without
-any code changes here.
+Scenario D content (appended into the same workspace prompt rule via
+`scripts/prompts/freee-registration-prompt.md` — see
+[docs/llm-output-contract.md](./llm-output-contract.md) for the
+activation flow) instructs the LLM to call `d6e_call_external_api`
+against `freee` and `google_workspace`. Keeping the orchestration inside
+the prompt means the same backend works for the Slack / Discord / LINE
+proxies without any code changes here.
+
+**Activating Scenario D:**
+
+Scenario D is appended to the existing workspace prompt rule by the d6e
+AI itself. When the user pastes
+[`scripts/prompts/freee-registration-prompt.md`](../scripts/prompts/freee-registration-prompt.md)
+into the d6e chat UI, the receiving model uses these MCP tools to
+perform the edit:
+
+- `d6e_list_workspace_prompt_rules` — locate the rule that currently
+  carries Scenarios A/B/C.
+- `d6e_update_workspace_prompt_rule` — append the Scenario D body to
+  that rule's `content`, leaving the original sections untouched.
+
+This avoids a separate REST round-trip from this app and keeps the
+sample's `npm run init` script unchanged (it still registers only the
+base `ai-keiri-prompt.md`).
 
 **Upstream references:**
 

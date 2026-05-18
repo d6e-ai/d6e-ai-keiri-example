@@ -120,6 +120,21 @@ npm run dev
 Open <http://localhost:5173> (or whichever port Vite assigns) and try the
 AI Journal page.
 
+### 5. (Optional) Enable the "freee に登録" button
+
+Journal generation works as soon as step 3 finishes. The
+[`scripts/prompts/freee-registration-prompt.md`](./scripts/prompts/freee-registration-prompt.md)
+file is **not** registered by `npm run init` — it is a paste-target for
+the d6e chat UI. To activate the registration flow, copy that file in
+full, paste it into a d6e chat in the same workspace, and the d6e AI
+will append Scenario D (freee deals + Google Drive upload) to the
+existing prompt rule via `d6e_list_workspace_prompt_rules` and
+`d6e_update_workspace_prompt_rule`. From that point on, pressing
+"freee に登録" on a generated journal returns a structured
+`kind: "registration"` payload. See
+[`docs/llm-output-contract.md`](./docs/llm-output-contract.md) for the
+activation contract and idempotency rules.
+
 ## Documentation
 
 - [`docs/architecture.md`](./docs/architecture.md) — request flow and directory layout
