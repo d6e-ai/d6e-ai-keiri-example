@@ -84,6 +84,18 @@
 			: `local-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 	}
 
+	function isUploadedFileView(value: unknown): value is UploadedFileView {
+		if (!value || typeof value !== 'object') return false;
+		const v = value as Record<string, unknown>;
+		return (
+			typeof v.fileId === 'string' &&
+			v.fileId.length > 0 &&
+			typeof v.filename === 'string' &&
+			typeof v.mimeType === 'string' &&
+			typeof v.sizeBytes === 'number'
+		);
+	}
+
 	async function uploadOne(file: File, localId: string): Promise<void> {
 		const formData = new FormData();
 		formData.append('file', file);
@@ -101,7 +113,12 @@
 			return;
 		}
 
-		const payload: unknown = await response.json().catch(() => ({}));
+		// If hooks.server.ts redirected the request to /auth/login (e.g. the
+		// session expired between page load and the upload), the browser may
+		// follow the chain into a 200 HTML response. response.ok is then
+		// true but the body is not JSON — guard against that by validating
+		// the parsed payload shape before accepting it as an UploadedFileView.
+		const payload: unknown = await response.json().catch(() => null);
 		if (!response.ok) {
 			const err = payload as { error?: string } | null | undefined;
 			const detail = err && typeof err.error === 'string' ? err.error : `HTTP ${response.status}`;
@@ -113,8 +130,17 @@
 			return;
 		}
 
-		const ref = payload as UploadedFileView;
-		uploadedRefs = [...uploadedRefs, ref];
+		if (!isUploadedFileView(payload)) {
+			const detail = `HTTP ${response.status} returned an unexpected body (session may have expired)`;
+			pendingUploads = pendingUploads.map((entry) =>
+				entry.localId === localId ? { ...entry, status: 'error', errorMessage: detail } : entry
+			);
+			errorMessage = m.journal_upload_failed({ filename: file.name, detail });
+			console.error('[ai-journal-page] uploadOne invalid payload:', detail);
+			return;
+		}
+
+		uploadedRefs = [...uploadedRefs, payload];
 		pendingUploads = pendingUploads.filter((entry) => entry.localId !== localId);
 	}
 
