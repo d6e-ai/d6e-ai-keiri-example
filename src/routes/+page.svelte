@@ -140,10 +140,14 @@
 
 	// Completion is only meaningful once freee + Drive reported success.
 	// Anything else (journal-only, registration with status !== 'success',
-	// or in-flight work) hides the button.
+	// or in-flight work) hides the button. The title check rejects both
+	// null AND empty string because deriveJournalTaskSummary coerces a
+	// null chat_session.title to ''. Without the truthiness check
+	// canComplete would flip true while handleComplete's `!currentTitle`
+	// guard silently bails, leaving the button visibly enabled but inert.
 	const canComplete = $derived(
 		currentChatSessionId !== null &&
-			currentTitle !== null &&
+			!!currentTitle &&
 			!isCurrentCompleted &&
 			parseResult?.kind === 'registration' &&
 			parseResult.result.status === 'success' &&
