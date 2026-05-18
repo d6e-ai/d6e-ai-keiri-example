@@ -28,8 +28,11 @@ sequenceDiagram
     User->>Auth: log in (email+password / Google)
     Auth-->>App: /auth/callback?code&state
     App->>Auth: POST /api/v1/auth/token (authorization_code)
-    Auth-->>App: { access_token, refresh_token }
-    App->>Files: GET /api/v1/workspaces/{D6E_WORKSPACE_ID}<br/>(membership probe)
+    Auth-->>App: { access_token (iss=d6e-auth), refresh_token }
+    Note over App,Token: stage 2 — d6e-auth's access_token is rejected by<br/>the Rust API (aud mismatch), so re-mint at b-button
+    App->>Token: POST /api/v1/auth/token (refresh_token)
+    Token-->>App: { access_token (iss=b-button), refresh_token }
+    App->>Files: GET /api/v1/workspaces/{D6E_WORKSPACE_ID}<br/>(membership probe, Bearer b-button token)
     Files-->>App: 200 OK (or 403 -> /auth/no-access)
     App-->>User: Set-Cookie auth-access / auth-refresh; 302 /
 
@@ -66,13 +69,20 @@ sequenceDiagram
   `event.locals.accessToken`, which is populated by `hooks.server.ts`
   from the `auth-access` cookie. There is no shared / long-lived
   server-side token.
-- The OAuth flow targets `${D6E_AUTH_URL}` (e.g. `https://www.d6e.ai`)
-  which issues JWTs whose `aud` claim matches the b-button instance
-  (`${D6E_BASE_URL}`), so the same token works for both Bearer-authed
-  Rust API calls and cookie-authed SvelteKit chat-session calls.
+- The OAuth flow starts at `${D6E_AUTH_URL}` (e.g. `https://www.d6e.ai`)
+  for the user-facing login UI, but the resulting refresh token is
+  **immediately re-presented to `${D6E_BASE_URL}/api/v1/auth/token`**
+  (b-button). Only the b-button-signed pair is persisted in cookies.
+  d6e-auth's access tokens are never stored or used as Bearer
+  credentials — b-button rejects them as `aud` mismatch (`iss=d6e-auth`).
+  After the two-stage exchange the same b-button JWT works for both
+  Bearer-authed Rust API calls and cookie-authed SvelteKit chat-session
+  calls. Per-session refresh (`session.loadSession()`) also stays on
+  the b-button endpoint so the rotated token never drifts back to a
+  d6e-auth-issued one.
 - The bootstrap script (`scripts/init-workspace.mjs`) uses a separate
-  admin-only refresh token (`D6E_INIT_REFRESH_TOKEN`) that talks
-  directly to the b-button token endpoint. End users never touch it.
+  admin-only refresh token (`D6E_INIT_REFRESH_TOKEN`) that follows the
+  same b-button refresh pattern. End users never touch it.
 
 ## Directory layout
 
@@ -136,8 +146,8 @@ messages/
 | Module                                                  | Responsibility                                                                                                                                                |
 | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `src/lib/server/env.ts`                                 | Validate `D6E_*` and `D6E_AUTH_*` env vars on first read with clear error messages.                                                                           |
-| `src/lib/server/oauth.ts`                               | Build authorize URLs, exchange codes / refresh tokens against `${D6E_AUTH_URL}/api/v1/auth/token`, decode JWT `exp`, generate CSRF state.                     |
-| `src/lib/server/session.ts`                             | Read / write the `auth-access` / `auth-refresh` / `auth-user` cookies; transparently refresh tokens that are within 60 seconds of expiry.                     |
+| `src/lib/server/oauth.ts`                               | Build authorize URLs, exchange codes at `${D6E_AUTH_URL}/api/v1/auth/token`, re-mint at `${D6E_BASE_URL}/api/v1/auth/token` (`refreshAccessTokenViaBaseUrl`), decode JWT `exp`, generate CSRF state. |
+| `src/lib/server/session.ts`                             | Read / write the `auth-access` / `auth-refresh` / `auth-user` cookies; transparently refresh tokens against b-button when within 60 seconds of expiry.        |
 | `src/hooks.server.ts`                                   | Populate `event.locals.accessToken` / `event.locals.user` per request; redirect unauthenticated requests to `/auth/login`.                                    |
 | `src/lib/server/d6e-client.ts`                          | Bearer- and cookie-authed fetch wrappers for files / execute-by-intent / chat-sessions; every entry point now takes `accessToken: string` explicitly.         |
 | `src/routes/auth/login/+server.ts`                      | Generate a state cookie and 302 the user to `${D6E_AUTH_URL}/auth/login`.                                                                                     |
@@ -165,10 +175,13 @@ messages/
   and body. The route handler relays that status code back to the
   browser, and the AI Journal / Ask pages show a red banner.
 - **Access token expired**: `session.loadSession()` refreshes the token
-  60 seconds before `exp` using the `auth-refresh` cookie. If the
-  refresh round-trip fails, the cookies are cleared and the next
-  request lands on `/auth/login`. Route handlers therefore never have
-  to retry on 401 themselves.
+  60 seconds before `exp` by POSTing the `auth-refresh` cookie value
+  to `${D6E_BASE_URL}/api/v1/auth/token` (b-button, never d6e-auth).
+  The rotated `access_token` therefore still carries `iss=b-button`,
+  which is what every Rust API endpoint expects. If the refresh
+  round-trip fails, the cookies are cleared and the next request lands
+  on `/auth/login`. Route handlers therefore never have to retry on
+  401 themselves.
 - **Refresh token rotated / revoked**: same as above — the user is
   redirected to `/auth/login` and can sign in again. There is no
   shared server-side token to update.

@@ -2,9 +2,11 @@
 //
 // Purpose:
 //   Verifies the CSRF state, exchanges the authorization code for a JWT
-//   pair, then probes d6e (GET /api/v1/workspaces/{D6E_WORKSPACE_ID})
-//   to make sure the user is a member of the workspace this app is
-//   tied to. On success the JWT pair is written to HTTP-only cookies
+//   pair, RE-MINTS that pair at the b-button instance so the access
+//   token has the audience expected by every Bearer endpoint under
+//   ${D6E_BASE_URL}, then probes d6e (GET /api/v1/workspaces/{id}) to
+//   make sure the user is a member of the workspace this app is tied
+//   to. On success the b-button pair is written to HTTP-only cookies
 //   and the user is bounced to the originally-requested URL. On
 //   membership failure the user is sent to /auth/no-access (cookies
 //   are cleared so they cannot see app data with a token that the d6e
@@ -14,6 +16,13 @@
 //   - state cookie format must match what /auth/login wrote:
 //     base64url(JSON({ state, returnTo })). Mismatched / missing state
 //     is treated as an open-redirect attempt and returns 400.
+//   - Token exchange runs in TWO stages:
+//       1. d6e-auth (${D6E_AUTH_URL}/api/v1/auth/token, authorization_code)
+//          -> returns a pair signed with `iss=d6e-auth`.
+//       2. b-button (${D6E_BASE_URL}/api/v1/auth/token, refresh_token)
+//          -> returns a pair signed with the audience the API expects.
+//     This mirrors how scripts/init-workspace.mjs upgrades its admin
+//     refresh token before talking to the b-button API.
 //   - Membership probe timeout: 10 seconds. Hard upstream errors fold
 //     into /auth/no-access too, since we cannot prove membership.
 //
@@ -25,7 +34,12 @@
 import { error, redirect } from '@sveltejs/kit';
 
 import { D6eClientError, verifyWorkspaceMembership } from '$lib/server/d6e-client';
-import { constantTimeEqual, exchangeAuthorizationCode, OauthError } from '$lib/server/oauth';
+import {
+	constantTimeEqual,
+	exchangeAuthorizationCode,
+	OauthError,
+	refreshAccessTokenViaBaseUrl
+} from '$lib/server/oauth';
 import {
 	clearOauthStateCookie,
 	clearSession,
@@ -85,15 +99,34 @@ export const GET: RequestHandler = async (event) => {
 		throw error(400, 'OAuth state mismatch');
 	}
 
-	let tokens;
+	// Stage 1: d6e-auth issues a pair signed with `iss=d6e-auth`. The
+	// b-button API rejects these as Bearer credentials (audience
+	// mismatch), so we cannot use them directly.
+	let authTokens;
 	try {
-		tokens = await exchangeAuthorizationCode(CALLER_TAG, code);
+		authTokens = await exchangeAuthorizationCode(CALLER_TAG, code);
 	} catch (err) {
 		if (err instanceof OauthError) {
 			console.error(`[${CALLER_TAG}] token exchange failed: ${err.message}`);
 		} else {
 			const msg = err instanceof Error ? err.message : String(err);
 			console.error(`[${CALLER_TAG}] token exchange unexpected error: ${msg}`);
+		}
+		throw redirect(302, '/auth/login');
+	}
+
+	// Stage 2: hand the d6e-auth refresh token to b-button, which
+	// re-mints the pair against its own keypair. From this point on
+	// every cookie value is a b-button-signed JWT.
+	let tokens;
+	try {
+		tokens = await refreshAccessTokenViaBaseUrl(CALLER_TAG, authTokens.refreshToken);
+	} catch (err) {
+		if (err instanceof OauthError) {
+			console.error(`[${CALLER_TAG}] b-button token exchange failed: ${err.message}`);
+		} else {
+			const msg = err instanceof Error ? err.message : String(err);
+			console.error(`[${CALLER_TAG}] b-button token exchange unexpected error: ${msg}`);
 		}
 		throw redirect(302, '/auth/login');
 	}

@@ -1,11 +1,12 @@
-// OAuth2 Authorization Code Flow against d6e-auth.
+// OAuth2 Authorization Code Flow against d6e-auth + b-button.
 //
 // Purpose:
-//   This module is the single place that knows how to talk to the
-//   d6e-auth (https://www.d6e.ai) token endpoint. It builds authorize
-//   URLs, exchanges authorization codes for JWT pairs, refreshes
-//   expired access tokens, and decodes JWT exp claims so the caller
-//   can decide whether a cached token is still good.
+//   This module is the single place that knows how to talk to BOTH
+//   the central d6e-auth (https://www.d6e.ai) token endpoint AND the
+//   per-instance b-button (${D6E_BASE_URL}) token endpoint. Login
+//   happens at d6e-auth; the resulting refresh token is then exchanged
+//   at b-button so the access_token has the audience b-button itself
+//   accepts on every Bearer call.
 //
 // Main specifications:
 //   - buildAuthorizeUrl(state): returns the absolute URL of the login
@@ -13,9 +14,16 @@
 //     parameters that d6e-auth's /auth/login page expects.
 //   - exchangeAuthorizationCode(caller, code): POSTs to
 //     ${D6E_AUTH_URL}/api/v1/auth/token with grant_type=authorization_code
-//     and returns the resulting tokens + expiry.
-//   - refreshAccessToken(caller, refreshToken): POSTs to the same
-//     endpoint with grant_type=refresh_token and returns a fresh pair.
+//     and returns the resulting tokens + expiry. The access_token in the
+//     response has `iss=d6e-auth` and is NOT a valid Bearer for b-button.
+//   - refreshAccessTokenAtAuth(caller, refreshToken): rarely used.
+//     Refreshes against d6e-auth itself. Kept around for completeness
+//     but most callers want refreshAccessTokenViaBaseUrl() instead.
+//   - refreshAccessTokenViaBaseUrl(caller, refreshToken): POSTs to
+//     ${D6E_BASE_URL}/api/v1/auth/token with grant_type=refresh_token.
+//     b-button accepts d6e-auth-issued refresh tokens here and returns
+//     a fresh pair signed for its own audience. This is the variant
+//     /auth/callback and session.ts use.
 //   - createOauthState(): cryptographically random opaque string used
 //     as the CSRF state parameter; stored in a short-lived cookie by
 //     /auth/login and verified by /auth/callback.
@@ -28,15 +36,16 @@
 //     verifies it on every request, and the cookie is HTTP-only so an
 //     attacker cannot forge one client-side. Local exp parsing is for
 //     deciding when to refresh proactively, not for authorization.
-//   - The d6e-auth token endpoint is synchronous; we apply a 30 second
-//     timeout so a hung upstream does not block the SvelteKit hook
-//     pipeline indefinitely.
+//   - Both token endpoints are treated as synchronous; we apply a
+//     30 second timeout so a hung upstream does not block the
+//     SvelteKit hook pipeline indefinitely.
 
 import {
 	getD6eAuthClientId,
 	getD6eAuthClientSecret,
 	getD6eAuthRedirectUri,
-	getD6eAuthUrl
+	getD6eAuthUrl,
+	getD6eUrl
 } from './env';
 
 const TOKEN_REQUEST_TIMEOUT_MS = 30_000;
@@ -134,7 +143,17 @@ export async function exchangeAuthorizationCode(
 	});
 }
 
-export async function refreshAccessToken(
+/**
+ * Refresh a token against d6e-auth itself. This is rarely the right
+ * call from this app — d6e-auth issues tokens with `iss=d6e-auth`,
+ * which the b-button API instance rejects with 401 (aud mismatch).
+ * Prefer `refreshAccessTokenViaBaseUrl()` below for any token that
+ * will be used as a Bearer header against `${D6E_BASE_URL}`.
+ *
+ * Exposed only so it stays available if a future flow needs to talk
+ * to d6e-auth directly (e.g. /api/v1/auth/userinfo on d6e-auth).
+ */
+export async function refreshAccessTokenAtAuth(
 	caller: string,
 	refreshToken: string
 ): Promise<OauthTokens> {
@@ -147,6 +166,28 @@ export async function refreshAccessToken(
 		refresh_token: refreshToken,
 		client_id: clientId,
 		client_secret: clientSecret
+	});
+}
+
+/**
+ * Re-mint a refresh token at the b-button instance so the resulting
+ * access_token has the audience expected by all `${D6E_BASE_URL}`
+ * Bearer endpoints (file storage, workspaces, execute-by-intent).
+ *
+ * b-button's `/api/v1/auth/token` accepts a d6e-auth-issued refresh
+ * token as input and returns a fresh pair signed for itself — the
+ * same trick `scripts/init-workspace.mjs` uses. No `client_id` /
+ * `client_secret` is required against this endpoint because the
+ * b-button instance already knows which OAuth client backs it.
+ */
+export async function refreshAccessTokenViaBaseUrl(
+	caller: string,
+	refreshToken: string
+): Promise<OauthTokens> {
+	const baseUrl = getD6eUrl(caller);
+	return postTokenEndpoint(caller, `${baseUrl}/api/v1/auth/token`, {
+		grant_type: 'refresh_token',
+		refresh_token: refreshToken
 	});
 }
 

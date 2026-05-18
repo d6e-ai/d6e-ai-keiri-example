@@ -12,10 +12,13 @@
 //     / auth-user cookies (HTTP-only, SameSite=Lax, Secure outside dev).
 //   - clearSession(event): deletes all three cookies.
 //   - loadSession(event): returns the current access token + user when
-//     valid, transparently refreshing via d6e-auth when the access
-//     token is within REFRESH_GRACE_MS of its expiry. Returns null
-//     when there is no session or refresh failed (caller should
-//     redirect to /auth/login).
+//     valid, transparently refreshing against the b-button instance
+//     when the access token is within REFRESH_GRACE_MS of its expiry.
+//     Refresh is intentionally aimed at the b-button token endpoint
+//     (not d6e-auth) so the resulting access_token has the audience
+//     every ${D6E_BASE_URL} Bearer endpoint expects. Returns null when
+//     there is no session or refresh failed (caller should redirect
+//     to /auth/login).
 //   - OAUTH_STATE_COOKIE / readOauthStateCookie() / writeOauthStateCookie()
 //     / clearOauthStateCookie() handle the short-lived CSRF state for
 //     the /auth/login -> /auth/callback round-trip.
@@ -32,7 +35,12 @@
 import { error, type RequestEvent } from '@sveltejs/kit';
 import { dev } from '$app/environment';
 
-import { decodeJwtExpMs, OauthError, refreshAccessToken, type OauthTokens } from './oauth';
+import {
+	decodeJwtExpMs,
+	OauthError,
+	refreshAccessTokenViaBaseUrl,
+	type OauthTokens
+} from './oauth';
 
 const ACCESS_TOKEN_COOKIE = 'auth-access';
 const REFRESH_TOKEN_COOKIE = 'auth-refresh';
@@ -58,11 +66,12 @@ const ACCESS_COOKIE_FALLBACK_MAX_AGE_S = 60 * 60;
 const OAUTH_STATE_COOKIE_MAX_AGE_S = 60 * 10;
 
 // Module-level deduplication of concurrent refresh attempts, keyed by
-// refresh token value. d6e-auth rotates the refresh token on every
-// use, so parallel requests carrying the same auth-refresh cookie
-// (e.g. a multi-file upload firing several /api/upload calls while
-// the access token sits in its grace window) would otherwise race:
-// only one POST to /api/v1/auth/token would succeed and the rest
+// refresh token value. The b-button token endpoint rotates the
+// refresh token on every successful use, so parallel requests
+// carrying the same auth-refresh cookie (e.g. a multi-file upload
+// firing several /api/upload calls while the access token sits in
+// its grace window) would otherwise race: only one POST to
+// ${D6E_BASE_URL}/api/v1/auth/token would succeed and the rest
 // would fail, calling clearSession() and emitting cookie-delete
 // Set-Cookie headers that can clobber the successful sibling's
 // fresh-token headers and log the user out. Sharing a single
@@ -73,7 +82,10 @@ const inflightRefreshes = new Map<string, Promise<OauthTokens>>();
 function refreshAccessTokenDeduped(caller: string, refreshToken: string): Promise<OauthTokens> {
 	const existing = inflightRefreshes.get(refreshToken);
 	if (existing) return existing;
-	const promise = refreshAccessToken(caller, refreshToken).finally(() => {
+	// Refresh against b-button (not d6e-auth) so the new access
+	// token is signed for the audience that ${D6E_BASE_URL}'s
+	// Bearer endpoints verify.
+	const promise = refreshAccessTokenViaBaseUrl(caller, refreshToken).finally(() => {
 		inflightRefreshes.delete(refreshToken);
 	});
 	inflightRefreshes.set(refreshToken, promise);

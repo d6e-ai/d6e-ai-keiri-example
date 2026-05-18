@@ -149,11 +149,15 @@ the d6e frontend's admin UI for now.
 **Upstream reference:**
 [d6e `packages/frontend/src/routes/api/workspace-prompt-rules/+server.ts`](https://github.com/d6e-ai/d6e/blob/main/packages/frontend/src/routes/api/workspace-prompt-rules/+server.ts).
 
-## 4. End-user OAuth2 — `${D6E_AUTH_URL}/api/v1/auth/token`
+## 4. End-user OAuth2 — two-stage token exchange
 
-**Hosted by:** d6e-auth (e.g. `https://www.d6e.ai`). Returns JWT pairs
-whose `aud` matches the same `b-button` instance that validates them,
-which avoids audience-claim mismatch errors on the API side.
+**Hosted by:** d6e-auth (e.g. `https://www.d6e.ai`) **and** the per-app
+b-button instance (`${D6E_BASE_URL}`). Login happens at d6e-auth; the
+resulting refresh token is then re-minted at b-button so the resulting
+access_token has the audience b-button's own Bearer endpoints accept.
+Skipping this second exchange produces a 401 on every workspace /
+file / workflow call (audience-claim mismatch — d6e-auth signs tokens
+with `iss=d6e-auth`, which b-button rejects).
 
 This app implements the OAuth2 **Authorization Code** flow per end
 user. The flow lives in three SvelteKit routes:
@@ -165,7 +169,9 @@ user. The flow lives in three SvelteKit routes:
 | Logout (cookie clear + 302)         | `GET /auth/logout` (or POST form)  |
 | Membership reject                   | `GET /auth/no-access`              |
 
-**Token endpoint request body (JSON):**
+### Stage 1 — d6e-auth (`${D6E_AUTH_URL}/api/v1/auth/token`)
+
+**Request body (JSON):**
 
 ```json
 {
@@ -177,10 +183,34 @@ user. The flow lives in three SvelteKit routes:
 }
 ```
 
-Refresh requests use `grant_type=refresh_token` with the rotated
-`refresh_token` instead of `code` and drop the `redirect_uri` field.
+The response shape is the standard OAuth2 token response
+(`access_token`, `refresh_token`, `token_type`, `expires_in`).
+**The `access_token` here is signed with `iss=d6e-auth` and cannot
+be used as a Bearer credential against `${D6E_BASE_URL}`.** This app
+discards it immediately and only keeps the `refresh_token`.
 
-**Response (JSON):**
+### Stage 2 — b-button (`${D6E_BASE_URL}/api/v1/auth/token`)
+
+**Request body (JSON):**
+
+```json
+{
+	"grant_type": "refresh_token",
+	"refresh_token": "<refresh_token from stage 1>"
+}
+```
+
+No `client_id` / `client_secret` is required against b-button: the
+instance already knows which OAuth client backs it. b-button returns
+a fresh token pair signed for its own audience, and **only this pair
+is written to the user's cookies**.
+
+All subsequent refreshes (triggered by `loadSession()` when the
+access token is within 60 seconds of expiry) use this same b-button
+endpoint, so once the user is logged in we never touch d6e-auth
+again until the next interactive login.
+
+**Response shape (both stages):**
 
 ```json
 {
@@ -193,19 +223,22 @@ Refresh requests use `grant_type=refresh_token` with the rotated
 
 Notes:
 
-- The response always rotates `refresh_token`. This app stores the
-  rotated value in the user's `auth-refresh` cookie (HTTP-only,
-  SameSite=Lax, 30-day cap), so the next refresh round-trip uses the
-  freshest token automatically.
+- Both endpoints rotate `refresh_token` on every call. The app stores
+  the rotated value from stage 2 in the user's `auth-refresh` cookie
+  (HTTP-only, SameSite=Lax, 30-day cap), so the next refresh
+  round-trip always uses the freshest b-button-issued token.
 - 4xx responses cause the user to be bounced back to `/auth/login` so
   they can try again with a fresh authorization code.
 - 5xx responses are transient and surface as a 502 client error.
 
 **This app's wrappers:**
-[`src/lib/server/oauth.ts`](../src/lib/server/oauth.ts) (token endpoint),
-[`src/lib/server/session.ts`](../src/lib/server/session.ts) (cookie store
-and exp-based refresh), and [`src/hooks.server.ts`](../src/hooks.server.ts)
-(per-request session loading + unauthenticated redirect).
+[`src/lib/server/oauth.ts`](../src/lib/server/oauth.ts) (token
+endpoints — `exchangeAuthorizationCode()` for stage 1,
+`refreshAccessTokenViaBaseUrl()` for stage 2),
+[`src/lib/server/session.ts`](../src/lib/server/session.ts) (cookie
+store and exp-based refresh, always via b-button), and
+[`src/hooks.server.ts`](../src/hooks.server.ts) (per-request session
+loading + unauthenticated redirect).
 
 ### Workspace allow-list
 
@@ -268,12 +301,15 @@ which in turn call helpers in
 | `GET /api/v1/workspaces/{id}`                         | `Authorization: Bearer <access_token>` | same as above (only called from `/auth/callback`)                       |
 | `POST /api/workflows/execute-by-intent`               | `Authorization: Bearer <access_token>` | same as above                                                           |
 | `/api/chat-sessions[*]`                               | `Cookie: auth-token=<access_token>`    | same as above (re-emitted as a server-to-server cookie)                 |
-| `POST ${D6E_AUTH_URL}/api/v1/auth/token` (user)       | JSON `code` / `refresh_token`          | OAuth2 code from `/auth/callback`, or rotated value of `auth-refresh`   |
+| `POST ${D6E_AUTH_URL}/api/v1/auth/token` (user, stage 1) | JSON `code`                            | OAuth2 authorization code received by `/auth/callback`                  |
+| `POST ${D6E_BASE_URL}/api/v1/auth/token` (user, stage 2 / refresh) | JSON `refresh_token`         | rotated `auth-refresh` cookie value (or stage 1 output on login)        |
 | `POST ${D6E_BASE_URL}/api/v1/auth/token` (init)       | JSON `refresh_token`                   | `D6E_INIT_REFRESH_TOKEN` (admin-only, never used by the user flow)      |
 | `POST /api/workspace-prompt-rules`                    | `Cookie: auth-token=<access_token>`    | access token issued by the init refresh above                           |
 
 Bearer headers and `auth-token` cookies carry the same JWT — only the
 transport differs. The app never persists the JWT server-side; every
 request reads the user's cookie via `hooks.server.ts`, which
-transparently refreshes it via `${D6E_AUTH_URL}/api/v1/auth/token` when
-the JWT's `exp` is within 60 seconds.
+transparently refreshes it via `${D6E_BASE_URL}/api/v1/auth/token` when
+the JWT's `exp` is within 60 seconds. Refreshing against b-button
+(not d6e-auth) is intentional — only b-button-issued access tokens
+are accepted by the Rust API.

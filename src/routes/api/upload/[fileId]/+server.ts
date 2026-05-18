@@ -35,10 +35,7 @@ export const DELETE: RequestHandler = async (event) => {
 
 	const ok = await deleteFile(CALLER_TAG, accessToken, fileId);
 	if (!ok) {
-		return json(
-			{ error: `Failed to delete file ${fileId} on d6e Storage` },
-			{ status: 502 }
-		);
+		return json({ error: `Failed to delete file ${fileId} on d6e Storage` }, { status: 502 });
 	}
 	return json({ ok: true });
 };

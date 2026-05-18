@@ -27,7 +27,10 @@ sequenceDiagram
     User->>Auth: log in with email+password or Google
     Auth-->>App: redirect ?code=...&state=...
     App->>Auth: POST /api/v1/auth/token (authorization_code)
-    Auth-->>App: access_token + refresh_token (HTTP-only cookies)
+    Auth-->>App: access_token (iss=d6e-auth) + refresh_token
+    Note over App,Files: stage 2 — re-mint at b-button so the access_token<br/>has the audience the Rust API expects
+    App->>Files: POST /api/v1/auth/token (refresh_token)
+    Files-->>App: access_token (iss=b-button) + refresh_token<br/>(written to HTTP-only cookies)
     App->>Files: GET /api/v1/workspaces/{wsId} (membership check)
     Files-->>App: 200 OK (or 403 -> /auth/no-access)
 
@@ -166,8 +169,12 @@ AI Journal page.
   at `/auth/no-access` after login.
 - Tokens live only in the user's `auth-access` / `auth-refresh`
   cookies. There is no persistent server-side session store; cookies
-  are HTTP-only and rotated via the d6e-auth token endpoint when they
-  are about to expire.
+  are HTTP-only and rotated via the b-button instance's
+  `${D6E_BASE_URL}/api/v1/auth/token` endpoint when they are about to
+  expire. d6e-auth is only touched during the initial interactive
+  login at `/auth/callback`; after the two-stage exchange every
+  subsequent refresh stays on the same b-button instance so the
+  resulting access_token retains the audience the Rust API requires.
 - The journal table is read-only. Revisions happen by sending a
   natural-language correction back to the LLM (see
   `docs/llm-output-contract.md`). Files cannot be added or removed
