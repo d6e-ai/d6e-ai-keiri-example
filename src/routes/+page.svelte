@@ -44,6 +44,15 @@
 	//   from /tasks pending tab) puts the user back into the same
 	//   session.
 	//
+	//   Within a single browser session, action handlers (handleExecute /
+	//   handleRevise / handleRegister) update `currentChatSessionId` and
+	//   `currentTitle` directly from the /api/intent response, NOT via
+	//   invalidateAll(). The $effect below therefore only fires on a
+	//   genuine session swap (initial mount, or a different chatSessionId
+	//   in the URL). This avoids a race where the reactive re-run of the
+	//   loader would clobber the freshly-populated `parseResult`, which
+	//   manifested as "the journal only appears after a manual reload".
+	//
 	// Note: the previous "pending tasks" section that used to render on
 	// this page has been moved to /tasks (under the "Pending" tab). The
 	// AI Journal page now focuses on the active session only.
@@ -54,7 +63,7 @@
 	import CheckCircle2Icon from '@lucide/svelte/icons/check-circle-2';
 	import LoaderCircleIcon from '@lucide/svelte/icons/loader-circle';
 	import PlayIcon from '@lucide/svelte/icons/play';
-	import { invalidateAll, replaceState } from '$app/navigation';
+	import { replaceState } from '$app/navigation';
 
 	import JournalResult from '$lib/components/journal-result.svelte';
 	import ReceiptUploader from '$lib/components/receipt-uploader.svelte';
@@ -155,35 +164,30 @@
 			!isCompleting
 	);
 
-	// Re-hydrate editable state when the SSR loader returns a different
-	// session. This fires when the URL changes (e.g. clicking a pending
-	// task in /tasks navigates here with ?chatSessionId=...).
-	// untrack() is required around the writes to avoid an infinite
-	// effect loop because the assignments below would otherwise feed
-	// back into the same reactive dependency graph.
+	// Re-hydrate editable state when the SSR loader returns a *different*
+	// session than the client currently holds. This fires only on real
+	// session swaps:
+	//   - initial mount with `?chatSessionId=...` in the URL,
+	//   - URL change after navigating from /tasks pending tab.
+	// Action handlers (handleExecute / handleRevise / handleRegister)
+	// no longer call invalidateAll(), so the "same id" branch reliably
+	// short-circuits and the freshly-populated parseResult is preserved.
+	// untrack() guards the read of `currentChatSessionId` because the
+	// effect must not re-fire when its own writes update that signal.
 	$effect(() => {
 		const restored = data.restoredSession;
 		const restoredId = restored?.id ?? null;
 		const currentId = untrack(() => currentChatSessionId);
 
 		if (restoredId === currentId) {
-			// Same session id as the client already holds. This happens
-			// after handleExecute/handleRevise/handleRegister set
-			// currentChatSessionId optimistically and then call
-			// invalidateAll(): the loader returns the freshly-persisted
-			// row with the same id we already stored. Skip the full
-			// re-hydration (it would clobber parseResult / uploadedRefs
-			// that the handler just populated), but still sync the
-			// server-only fields (title, completion flag) so canComplete
-			// can flip true and the "完了にする" button becomes enabled.
-			if (restored) {
-				if (untrack(() => currentTitle) !== restored.title) {
-					currentTitle = restored.title;
-				}
-				if (untrack(() => isCurrentCompleted) !== restored.isCompleted) {
-					isCurrentCompleted = restored.isCompleted;
-				}
-			}
+			// Same session as the client already holds. Do nothing on
+			// purpose: rewriting parseResult / uploadedRefs from a
+			// stale snapshot would clobber whatever the latest action
+			// handler just set. `currentTitle` / `isCurrentCompleted`
+			// are also kept in sync by the action handlers themselves
+			// (via the /api/intent response or via handleComplete), so
+			// there is no remaining server-only field that this effect
+			// needs to copy over.
 			return;
 		}
 
@@ -385,7 +389,7 @@
 		message: string,
 		fileRefs: UploadedFileView[],
 		chatSessionId: string | null
-	): Promise<{ rawMessage: string; chatSessionId: string | null }> {
+	): Promise<{ rawMessage: string; chatSessionId: string | null; title: string | null }> {
 		const requestBody: Record<string, unknown> = {
 			message,
 			inputFileRefs: fileRefs,
@@ -404,13 +408,24 @@
 			const detail = errPayload && typeof errPayload.error === 'string' ? errPayload.error : '';
 			throw new Error(`Execute-by-intent failed (${response.status}): ${detail}`);
 		}
-		const ok = payload as { success?: boolean; message?: string; chatSessionId?: string };
+		// `title` is included by the server when chat_session persistence
+		// succeeded; it is the post-PATCH value of chat_session.title so
+		// the caller can update `currentTitle` directly. Falls back to
+		// null when persistence failed or title was unchanged and null
+		// at rest.
+		const ok = payload as {
+			success?: boolean;
+			message?: string;
+			chatSessionId?: string;
+			title?: string;
+		};
 		if (!ok.success) {
 			throw new Error(ok.message ?? 'execute-by-intent returned success=false');
 		}
 		return {
 			rawMessage: ok.message ?? '',
-			chatSessionId: ok.chatSessionId ?? null
+			chatSessionId: ok.chatSessionId ?? null,
+			title: ok.title ?? null
 		};
 	}
 
@@ -424,16 +439,25 @@
 		isCurrentCompleted = false;
 		completedBannerVisible = false;
 		try {
-			const { rawMessage, chatSessionId } = await callIntent(CREATE_PROMPT, uploadedRefs, null);
+			const { rawMessage, chatSessionId, title } = await callIntent(
+				CREATE_PROMPT,
+				uploadedRefs,
+				null
+			);
 			parseResult = parseJournalMessage(rawMessage);
 			currentChatSessionId = chatSessionId;
+			// `title` comes from the /api/intent response and tells us
+			// the freshly created chat_session.title. Setting it here
+			// (instead of going through invalidateAll() + the restore
+			// $effect) is what stopped the "results only appear after a
+			// reload" bug — see the header comment on this file.
+			currentTitle = title;
+			// A newly created session is never completed by construction:
+			// the title is built via buildJournalTitle, which never adds
+			// the #completed suffix.
+			isCurrentCompleted = false;
 			if (chatSessionId) {
 				syncChatSessionIdToUrl(chatSessionId);
-				// invalidateAll() re-runs +page.server.ts with the new
-				// query parameter so data.restoredSession picks up the
-				// freshly-persisted row (and currentTitle is filled in
-				// by the restore effect above).
-				await invalidateAll();
 			}
 		} catch (err) {
 			const detail = err instanceof Error ? err.message : String(err);
@@ -487,7 +511,7 @@
 				message = comment;
 			}
 
-			const { rawMessage, chatSessionId } = await callIntent(
+			const { rawMessage, chatSessionId, title } = await callIntent(
 				message,
 				uploadedRefs,
 				currentChatSessionId
@@ -496,7 +520,13 @@
 			if (chatSessionId) {
 				currentChatSessionId = chatSessionId;
 				syncChatSessionIdToUrl(chatSessionId);
-				await invalidateAll();
+			}
+			// The server regenerates the title when a revise turn
+			// changes the parsed payload (entry count / total). Apply
+			// the new value so the [keiri] header card stays in sync
+			// without going through invalidateAll().
+			if (title !== null) {
+				currentTitle = title;
 			}
 		} catch (err) {
 			const detail = err instanceof Error ? err.message : String(err);
@@ -524,7 +554,7 @@
 				'</registration_request>'
 			].join('\n');
 
-			const { rawMessage, chatSessionId } = await callIntent(
+			const { rawMessage, chatSessionId, title } = await callIntent(
 				message,
 				uploadedRefs,
 				currentChatSessionId
@@ -533,7 +563,12 @@
 			if (chatSessionId) {
 				currentChatSessionId = chatSessionId;
 				syncChatSessionIdToUrl(chatSessionId);
-				await invalidateAll();
+			}
+			// The register turn rarely changes the journal payload (and
+			// therefore the title), but apply whatever the server
+			// reports so the local view stays authoritative.
+			if (title !== null) {
+				currentTitle = title;
 			}
 		} catch (err) {
 			const detail = err instanceof Error ? err.message : String(err);
@@ -568,10 +603,12 @@
 				throw new Error(detail);
 			}
 
-			// Reset client state immediately so the page returns to
-			// fresh-start before the invalidateAll round-trip below
-			// resolves. The restore $effect will then no-op because
-			// data.restoredSession === null matches currentChatSessionId === null.
+			// Reset client state immediately so the page returns to the
+			// fresh-start UI. There is no need to re-fetch the loader
+			// data here: the cleared `currentChatSessionId` and the
+			// URL update below already produce the correct $effect
+			// behaviour on the next genuine navigation, and the /tasks
+			// page does its own fetch when the user opens it.
 			parseResult = null;
 			uploadedRefs = [];
 			pendingUploads = [];
@@ -581,7 +618,6 @@
 			showCompletedBanner();
 
 			syncChatSessionIdToUrl(null);
-			await invalidateAll();
 		} catch (err) {
 			const detail = err instanceof Error ? err.message : String(err);
 			errorMessage = detail;
@@ -610,7 +646,7 @@
 		</div>
 	{/if}
 
-	{#if !parseResult}
+	{#if !parseResult && !isExecuting}
 		<section class="space-y-4">
 			<h2 class="text-lg font-semibold">{m.journal_upload_heading()}</h2>
 			<ReceiptUploader onfiles={handleFiles} disabled={isExecuting} />
@@ -645,7 +681,7 @@
 				</div>
 			</div>
 		</section>
-	{:else}
+	{:else if parseResult}
 		<section class="space-y-4">
 			<UploadedFileList
 				pending={pendingUploads}
