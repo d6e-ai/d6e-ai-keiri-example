@@ -308,7 +308,7 @@
 			class="flex items-center gap-3 rounded-xl border bg-card p-4 text-sm text-muted-foreground shadow-sm"
 		>
 			<LoaderCircleIcon class="size-5 animate-spin text-primary" aria-hidden="true" />
-			<span>{m.journal_loading()}</span>
+			<span>{registerInFlight ? m.journal_register_loading() : m.journal_loading()}</span>
 		</div>
 	{/if}
 
