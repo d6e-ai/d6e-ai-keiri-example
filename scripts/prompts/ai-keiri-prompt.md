@@ -28,18 +28,18 @@
 
 ```json
 {
-	"kind": "journal",
-	"entries": [
-		{
-			"date": "2026-04-30",
-			"debit_account": "消耗品費",
-			"credit_account": "現金",
-			"amount": 1280,
-			"tax_amount": 116,
-			"description": "コンビニ事務用品"
-		}
-	],
-	"warnings": []
+  "kind": "journal",
+  "entries": [
+    {
+      "date": "2026-04-30",
+      "debit_account": "消耗品費",
+      "credit_account": "現金",
+      "amount": 1280,
+      "tax_amount": 116,
+      "description": "コンビニ事務用品"
+    }
+  ],
+  "warnings": []
 }
 ```
 

@@ -20,9 +20,9 @@ d6e-auth — see section 4 below.
 
 ```json
 {
-  "filename": "receipt.jpg",
-  "content_type": "image/jpeg",
-  "content": "<base64 of the file bytes>"
+	"filename": "receipt.jpg",
+	"content_type": "image/jpeg",
+	"content": "<base64 of the file bytes>"
 }
 ```
 
@@ -30,8 +30,8 @@ d6e-auth — see section 4 below.
 
 ```json
 {
-  "id": "019bbac4-68a4-71d3-8928-8b32cabec841",
-  "filename": "receipt.jpg"
+	"id": "019bbac4-68a4-71d3-8928-8b32cabec841",
+	"filename": "receipt.jpg"
 }
 ```
 
@@ -58,16 +58,16 @@ turns a browser-sent `multipart/form-data` into the JSON above via
 
 ```json
 {
-  "message": "領収書を仕訳に変換してください",
-  "workspaceId": "<UUID>",
-  "inputFileRefs": [
-    {
-      "fileId": "<UUID from Storage>",
-      "filename": "receipt.jpg",
-      "mimeType": "image/jpeg",
-      "sizeBytes": 124300
-    }
-  ]
+	"message": "領収書を仕訳に変換してください",
+	"workspaceId": "<UUID>",
+	"inputFileRefs": [
+		{
+			"fileId": "<UUID from Storage>",
+			"filename": "receipt.jpg",
+			"mimeType": "image/jpeg",
+			"sizeBytes": 124300
+		}
+	]
 }
 ```
 
@@ -85,15 +85,15 @@ Notes:
 
 **Response (JSON):**
 
-````json
+```json
 {
-  "success": true,
-  "message": "領収書を解析し、3件の仕訳を生成しました。\n\n```json\n{...}\n```",
-  "workflowName": null,
-  "files": [],
-  "result": null
+	"success": true,
+	"message": "領収書を解析し、3件の仕訳を生成しました。\n\n```json\n{...}\n```",
+	"workflowName": null,
+	"files": [],
+	"result": null
 }
-````
+```
 
 - `message` is the free-form assistant text. This app runs it through
   [`parseJournalMessage()`](../src/lib/parse-journal.ts) to extract the
@@ -122,8 +122,8 @@ upstream response unchanged.
 
 ```json
 {
-  "workspaceId": "<UUID>",
-  "content": "<prompt body up to 50,000 characters>"
+	"workspaceId": "<UUID>",
+	"content": "<prompt body up to 50,000 characters>"
 }
 ```
 
@@ -131,10 +131,10 @@ upstream response unchanged.
 
 ```json
 {
-  "id": "...",
-  "workspaceId": "...",
-  "content": "...",
-  "sortOrder": 0
+	"id": "...",
+	"workspaceId": "...",
+	"content": "...",
+	"sortOrder": 0
 }
 ```
 
@@ -161,8 +161,8 @@ instance both issues and validates access tokens, which guarantees the
 
 ```json
 {
-  "grant_type": "refresh_token",
-  "refresh_token": "<value of the auth-refresh cookie>"
+	"grant_type": "refresh_token",
+	"refresh_token": "<value of the auth-refresh cookie>"
 }
 ```
 
@@ -173,10 +173,10 @@ already knows which OAuth client backs it.
 
 ```json
 {
-  "access_token": "eyJhbGciOi...",
-  "refresh_token": "eyJhbGciOi...",
-  "token_type": "Bearer",
-  "expires_in": 3600
+	"access_token": "eyJhbGciOi...",
+	"refresh_token": "eyJhbGciOi...",
+	"token_type": "Bearer",
+	"expires_in": 3600
 }
 ```
 
@@ -205,13 +205,13 @@ This app stores every journal run and every general-question run as a
 `chat_session` in d6e so that the AI Journal list survives across page
 reloads and is also visible in the d6e chat UI.
 
-| Method                                 | Purpose                                                                                           |
-| -------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `GET /api/chat-sessions?workspaceId=…` | List the workspace's sessions (descending by `updatedAt`).                                        |
+| Method                  | Purpose                                                                                    |
+| ----------------------- | ------------------------------------------------------------------------------------------ |
+| `GET /api/chat-sessions?workspaceId=…` | List the workspace's sessions (descending by `updatedAt`).                                 |
 | `POST /api/chat-sessions`              | Create a session — body `{ workspaceId, title, messages, snsSource?, externalConversationKey? }`. |
-| `GET /api/chat-sessions/{id}`          | Fetch one session.                                                                                |
-| `PATCH /api/chat-sessions/{id}`        | Update `title` and/or `messages` (used for marking completed and appending revisions).            |
-| `DELETE /api/chat-sessions/{id}`       | Soft-deletes via the d6e implementation; row is removed from list endpoints.                      |
+| `GET /api/chat-sessions/{id}`          | Fetch one session.                                                                         |
+| `PATCH /api/chat-sessions/{id}`        | Update `title` and/or `messages` (used for marking completed and appending revisions).     |
+| `DELETE /api/chat-sessions/{id}`       | Soft-deletes via the d6e implementation; row is removed from list endpoints.               |
 
 All five accept the access token through a `Cookie: auth-token=<jwt>`
 header (Bearer is rejected). This app pins `workspaceId` from
@@ -233,13 +233,13 @@ which in turn call helpers in
 
 ## Auth model summary
 
-| Endpoint                                | Header / Body                          | Source variable                       |
-| --------------------------------------- | -------------------------------------- | ------------------------------------- |
-| `POST /api/v1/workspaces/{id}/files`    | `Authorization: Bearer <access_token>` | `getAccessToken()` (cached)           |
-| `POST /api/workflows/execute-by-intent` | `Authorization: Bearer <access_token>` | `getAccessToken()` (cached)           |
-| `POST /api/workspace-prompt-rules`      | `Cookie: auth-token=<access_token>`    | `getAccessToken()` at startup of init |
-| `/api/chat-sessions[*]`                 | `Cookie: auth-token=<access_token>`    | `getAccessToken()` (cached)           |
-| `POST /api/v1/auth/token`               | JSON `refresh_token` only              | `D6E_REFRESH_TOKEN`                   |
+| Endpoint                                | Header / Body                          | Source variable                          |
+| --------------------------------------- | -------------------------------------- | ---------------------------------------- |
+| `POST /api/v1/workspaces/{id}/files`    | `Authorization: Bearer <access_token>` | `getAccessToken()` (cached)              |
+| `POST /api/workflows/execute-by-intent` | `Authorization: Bearer <access_token>` | `getAccessToken()` (cached)              |
+| `POST /api/workspace-prompt-rules`      | `Cookie: auth-token=<access_token>`    | `getAccessToken()` at startup of init    |
+| `/api/chat-sessions[*]`                 | `Cookie: auth-token=<access_token>`    | `getAccessToken()` (cached)              |
+| `POST /api/v1/auth/token`               | JSON `refresh_token` only              | `D6E_REFRESH_TOKEN`                      |
 
 Bearer headers and `auth-token` cookies carry the same JWT — only the
 transport differs. The app obtains that JWT exactly once per ~1 hour by

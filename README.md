@@ -148,4 +148,4 @@ AI Journal page.
 
 ## License
 
-Proprietary - d6e.ai
+Proprietary - d6e AI, Inc.

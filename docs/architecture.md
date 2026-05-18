@@ -5,7 +5,7 @@ directory layout of `d6e-ai-keiri-example`.
 
 ## Sequence
 
-````mermaid
+```mermaid
 sequenceDiagram
     participant User as User Browser
     participant App as d6e-ai-keiri-example<br/>(SvelteKit)
@@ -44,7 +44,7 @@ sequenceDiagram
     App->>Sessions: PATCH /api/chat-sessions/<id> (append user+assistant)
     Sessions-->>App: updated session
     App-->>User: Update journal table
-````
+```
 
 ## Trust boundaries
 
@@ -105,23 +105,23 @@ messages/
 
 ## Module responsibilities
 
-| Module                                          | Responsibility                                                                                                                                  |
-| ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/lib/server/env.ts`                         | Validate `D6E_*` env vars on first read with clear error messages.                                                                              |
-| `src/lib/server/d6e-token.ts`                   | Cache the d6e access token in memory and refresh it via `${D6E_BASE_URL}/api/v1/auth/token` before it expires.                                  |
-| `src/lib/server/d6e-client.ts`                  | Bearer- and cookie-authed fetch wrappers for files / execute-by-intent / chat-sessions; retries each call once on 401 after invalidating cache. |
-| `src/routes/api/upload/+server.ts`              | Accepts `multipart/form-data` and forwards each file to d6e Storage.                                                                            |
-| `src/routes/api/intent/+server.ts`              | Calls `executeByIntent`, then persists user+assistant messages into a `chat_session` (creating or appending depending on `chatSessionId`).      |
-| `src/routes/api/chat-sessions/+server.ts`       | List / create chat sessions, pinning `workspaceId` from server env so the browser cannot leak across workspaces.                                |
-| `src/routes/api/chat-sessions/[id]/+server.ts`  | Retrieve / patch (title / messages) / delete a single chat session.                                                                             |
-| `src/lib/journal-title.ts`                      | Build and inspect the `[keiri] ...`, `[keiri-ask] ...`, and `... #completed` title conventions.                                                 |
-| `src/lib/journal-task.ts`                       | Derive `{ status, entryCount, totalAmount, journalDate }` from a `ChatSessionRow` for card rendering.                                           |
-| `src/lib/parse-journal.ts`                      | Pulls the first valid ` ```json ` block out of the assistant response and validates it with Zod.                                                |
-| `src/lib/components/journal-result.svelte`      | Renders the parsed journal as a read-only table; falls back to markdown on parse failure.                                                       |
-| `src/lib/components/task-card.svelte`           | One card per `chat_session` — title, status, derived journal summary.                                                                           |
-| `src/lib/components/task-detail-dialog.svelte`  | Modal that shows the full journal table and exposes Mark Completed / Revert / Delete.                                                           |
-| `src/lib/components/revise-comment-form.svelte` | Captures the user's natural-language revision request and forwards it to the page.                                                              |
-| `src/routes/+page.svelte`                       | Owns the upload → parse → revise pipeline and renders pending-task cards from the SSR loader.                                                   |
+| Module                                                  | Responsibility                                                                                                                                 |
+| ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/lib/server/env.ts`                                 | Validate `D6E_*` env vars on first read with clear error messages.                                                                             |
+| `src/lib/server/d6e-token.ts`                           | Cache the d6e access token in memory and refresh it via `${D6E_BASE_URL}/api/v1/auth/token` before it expires.                                 |
+| `src/lib/server/d6e-client.ts`                          | Bearer- and cookie-authed fetch wrappers for files / execute-by-intent / chat-sessions; retries each call once on 401 after invalidating cache. |
+| `src/routes/api/upload/+server.ts`                      | Accepts `multipart/form-data` and forwards each file to d6e Storage.                                                                           |
+| `src/routes/api/intent/+server.ts`                      | Calls `executeByIntent`, then persists user+assistant messages into a `chat_session` (creating or appending depending on `chatSessionId`).     |
+| `src/routes/api/chat-sessions/+server.ts`               | List / create chat sessions, pinning `workspaceId` from server env so the browser cannot leak across workspaces.                               |
+| `src/routes/api/chat-sessions/[id]/+server.ts`          | Retrieve / patch (title / messages) / delete a single chat session.                                                                            |
+| `src/lib/journal-title.ts`                              | Build and inspect the `[keiri] ...`, `[keiri-ask] ...`, and `... #completed` title conventions.                                                |
+| `src/lib/journal-task.ts`                               | Derive `{ status, entryCount, totalAmount, journalDate }` from a `ChatSessionRow` for card rendering.                                          |
+| `src/lib/parse-journal.ts`                              | Pulls the first valid ` ```json ` block out of the assistant response and validates it with Zod.                                               |
+| `src/lib/components/journal-result.svelte`              | Renders the parsed journal as a read-only table; falls back to markdown on parse failure.                                                      |
+| `src/lib/components/task-card.svelte`                   | One card per `chat_session` — title, status, derived journal summary.                                                                          |
+| `src/lib/components/task-detail-dialog.svelte`          | Modal that shows the full journal table and exposes Mark Completed / Revert / Delete.                                                          |
+| `src/lib/components/revise-comment-form.svelte`         | Captures the user's natural-language revision request and forwards it to the page.                                                             |
+| `src/routes/+page.svelte`                               | Owns the upload → parse → revise pipeline and renders pending-task cards from the SSR loader.                                                  |
 
 ## Failure model
 
