@@ -37,6 +37,7 @@ import { dev } from '$app/environment';
 
 import {
 	decodeJwtExpMs,
+	decodeJwtPayload,
 	OauthError,
 	refreshAccessTokenViaBaseUrl,
 	type OauthTokens
@@ -103,12 +104,6 @@ export interface Session {
 	user: SessionUser;
 }
 
-interface UserJwtClaims {
-	sub?: unknown;
-	email?: unknown;
-	name?: unknown;
-}
-
 const cookieDefaults = (maxAgeSeconds: number) =>
 	({
 		path: '/',
@@ -150,17 +145,8 @@ function decodeUserCookie(value: string): SessionUser | null {
 // Decode the sub/email/name JWT claims so /auth/callback can build a
 // SessionUser without an extra round trip to /api/v1/auth/userinfo.
 export function decodeUserFromAccessToken(token: string): SessionUser | null {
-	const parts = token.split('.');
-	if (parts.length < 2) return null;
-	const segment = parts[1];
-	const padLen = (4 - (segment.length % 4)) % 4;
-	const normalized = segment.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat(padLen);
-	let claims: UserJwtClaims;
-	try {
-		claims = JSON.parse(Buffer.from(normalized, 'base64').toString('utf8'));
-	} catch {
-		return null;
-	}
+	const claims = decodeJwtPayload(token);
+	if (!claims) return null;
 	if (typeof claims.sub !== 'string') return null;
 	const email = typeof claims.email === 'string' ? claims.email : '';
 	const name = typeof claims.name === 'string' ? claims.name : email;

@@ -107,23 +107,36 @@ export function constantTimeEqual(a: string, b: string): boolean {
 	return diff === 0;
 }
 
-// Decode the exp claim from a JWT without verifying the signature.
-// Returns the expiry in milliseconds since epoch, or null when the
-// token does not look like a JWT or carries no exp claim.
-export function decodeJwtExpMs(token: string): number | null {
+// Decode (without verifying) the payload segment of a JWT and return
+// it as a plain object. Returns null when the token does not have at
+// least two dot-separated segments or the middle segment fails to
+// parse as JSON. Centralising the base64url normalisation here means
+// any future fix (e.g. handling additional edge cases) only has to
+// land in one place.
+export function decodeJwtPayload(token: string): Record<string, unknown> | null {
 	const parts = token.split('.');
 	if (parts.length < 2) return null;
 	const segment = parts[1];
 	const padLen = (4 - (segment.length % 4)) % 4;
 	const normalized = segment.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat(padLen);
-	let payload: { exp?: number };
 	try {
-		payload = JSON.parse(Buffer.from(normalized, 'base64').toString('utf8'));
+		const parsed: unknown = JSON.parse(Buffer.from(normalized, 'base64').toString('utf8'));
+		if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+		return parsed as Record<string, unknown>;
 	} catch {
 		return null;
 	}
-	if (!payload.exp || !Number.isFinite(payload.exp)) return null;
-	return payload.exp * 1000;
+}
+
+// Decode the exp claim from a JWT without verifying the signature.
+// Returns the expiry in milliseconds since epoch, or null when the
+// token does not look like a JWT or carries no exp claim.
+export function decodeJwtExpMs(token: string): number | null {
+	const payload = decodeJwtPayload(token);
+	if (!payload) return null;
+	const exp = payload.exp;
+	if (typeof exp !== 'number' || !Number.isFinite(exp) || exp <= 0) return null;
+	return exp * 1000;
 }
 
 export async function exchangeAuthorizationCode(
