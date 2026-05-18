@@ -1,9 +1,13 @@
-// Server load for the Completed Tasks page (route "/tasks").
+// Server load for the Tasks page (route "/tasks").
 //
-// Same streaming pattern as the AI Journal page (see ../+page.server.ts).
-// We hand back the full chat_session row array and let the page
-// component filter / shape it with filterJournalSessions — that keeps
-// the [keiri] / #completed conventions in one place (src/lib/journal-title.ts).
+// Streams the full chat_session row list once (Promise streaming) so
+// both the "pending" and "completed" tabs share a single d6e
+// round-trip. Filtering happens client-side via toFilteredTasks()
+// using the title prefix conventions in journal-title.ts.
+//
+// The initial active tab is taken from `?status=pending|completed`,
+// defaulting to "pending" so the page opens on the in-progress list
+// most users want to act on first.
 
 import type { TasksFetchResult } from '$lib/journal-task';
 import { fetchChatSessionsForCaller } from '$lib/server/d6e-client';
@@ -11,13 +15,16 @@ import { requireAccessToken } from '$lib/server/session';
 
 import type { PageServerLoad } from './$types';
 
-const CALLER_TAG = '/tasks/+page.server.ts (completed)';
+const CALLER_TAG = '/tasks/+page.server.ts';
+
+export type TaskStatus = 'pending' | 'completed';
 
 export const load: PageServerLoad = async (event) => {
 	const accessToken = requireAccessToken(event, CALLER_TAG);
-	const completedTasks$: Promise<TasksFetchResult> = fetchChatSessionsForCaller(
-		CALLER_TAG,
-		accessToken
-	);
-	return { completedTasks$ };
+	const tasks$: Promise<TasksFetchResult> = fetchChatSessionsForCaller(CALLER_TAG, accessToken);
+
+	const statusParam = event.url.searchParams.get('status');
+	const initialStatus: TaskStatus = statusParam === 'completed' ? 'completed' : 'pending';
+
+	return { tasks$, initialStatus };
 };

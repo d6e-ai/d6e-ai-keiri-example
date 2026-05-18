@@ -17,7 +17,8 @@
 import type { JournalResult } from './journal-schema';
 import { COMPLETED_SUFFIX, isCompletedTitle, isJournalTitle, KEIRI_PREFIX } from './journal-title';
 import { parseJournalMessage, type ParseResult } from './parse-journal';
-import type { ChatSessionMessage, ChatSessionRow } from './server/d6e-client';
+import type { ChatSessionMessage, ChatSessionRow, IntentInputFileRef } from './server/d6e-client';
+import { isUploadedFileView } from './upload-types';
 
 /**
  * Shared shape returned by the SSR loaders for the AI Journal page and
@@ -55,6 +56,15 @@ export interface JournalTaskSummary {
 	 */
 	rawAssistantText: string;
 	parseResult: ParseResult | null;
+	/**
+	 * Receipt files that the most recent user turn referenced via
+	 * inputFileRefs. Used when re-entering the AI Journal page via
+	 * ?chatSessionId=<uuid> so the upload list can be re-hydrated with
+	 * exactly the files that produced the current journal. Empty when
+	 * no user turn carried an inputFileRefs snapshot (e.g. legacy rows
+	 * persisted before this field was introduced).
+	 */
+	uploadedRefs: IntentInputFileRef[];
 }
 
 interface FilterJournalSessionsOptions {
@@ -105,11 +115,51 @@ function stripTitlePrefix(title: string): string {
 	return body.trim();
 }
 
+/**
+ * Walk a chat_session row's messages from newest to oldest and return
+ * the inputFileRefs array carried by the most recent user UIMessage.
+ * /api/intent embeds this snapshot when persisting a turn so the AI
+ * Journal page can rehydrate `uploadedRefs` from `?chatSessionId=...`.
+ *
+ * The function only inspects `role: 'user'` messages. Legacy rows that
+ * do not carry the field are returned as an empty array; the caller
+ * treats that as "no receipts to restore" and the page renders an
+ * empty read-only list (the user can still send follow-up comments).
+ */
+export function extractLatestInputFileRefs(
+	messages: ChatSessionMessage[] | undefined
+): IntentInputFileRef[] {
+	if (!Array.isArray(messages) || messages.length === 0) return [];
+	for (let i = messages.length - 1; i >= 0; i -= 1) {
+		const msg = messages[i];
+		if (!msg || typeof msg !== 'object') continue;
+		if ((msg as Record<string, unknown>).role !== 'user') continue;
+
+		const refsRaw = (msg as Record<string, unknown>).inputFileRefs;
+		if (!Array.isArray(refsRaw) || refsRaw.length === 0) continue;
+
+		const refs: IntentInputFileRef[] = [];
+		for (const entry of refsRaw) {
+			if (isUploadedFileView(entry)) {
+				refs.push({
+					fileId: entry.fileId,
+					filename: entry.filename,
+					mimeType: entry.mimeType,
+					sizeBytes: entry.sizeBytes
+				});
+			}
+		}
+		if (refs.length > 0) return refs;
+	}
+	return [];
+}
+
 export function deriveJournalTaskSummary(row: ChatSessionRow): JournalTaskSummary {
 	const title = row.title ?? '';
 	const rawAssistantText = extractLatestAssistantText(row.messages);
 	const parseResult = rawAssistantText ? parseJournalMessage(rawAssistantText) : null;
 	const journal = parseResult && parseResult.kind === 'journal' ? parseResult.result : null;
+	const uploadedRefs = extractLatestInputFileRefs(row.messages);
 
 	return {
 		id: row.id,
@@ -119,7 +169,8 @@ export function deriveJournalTaskSummary(row: ChatSessionRow): JournalTaskSummar
 		isCompleted: isCompletedTitle(title),
 		journal,
 		rawAssistantText,
-		parseResult
+		parseResult,
+		uploadedRefs
 	};
 }
 

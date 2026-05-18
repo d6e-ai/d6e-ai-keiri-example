@@ -10,8 +10,8 @@
 	//   2. The user clicks the "Generate journal" button. We then call
 	//      POST /api/intent with the full uploadedRefs array as
 	//      inputFileRefs[] and persistAs='journal'. The chat_session id
-	//      that comes back is stored so subsequent revise turns append
-	//      to the same row.
+	//      that comes back is stored so subsequent revise / register
+	//      turns append to the same row.
 	//   3. The assistant message is parsed via parse-journal; success
 	//      renders either the journal table (kind:"journal") or the
 	//      registration result card (kind:"registration"). Anything else
@@ -19,48 +19,64 @@
 	//   4. The "revise" form posts a follow-up message. Its wrapping tag
 	//      depends on the current parse kind:
 	//        - kind:"journal"       -> <previous_journal>...</previous_journal>
-	//          so the LLM regenerates the entries instead of re-OCR.
 	//        - kind:"registration"  -> <additional_comment>...</additional_comment>
-	//          so the LLM treats it as a continuation of the registration
-	//          turn (e.g. user provided a company_id the LLM asked for).
 	//      The same uploadedRefs and chatSessionId are re-sent so the
 	//      server appends to the same chat_session row.
 	//   5. The "freee に登録" button (rendered inside JournalResult when
-	//      kind:"journal") triggers handleRegister(). It sends a fixed
-	//      registration-request message that wraps the previous journal
-	//      JSON inside <registration_request>...</registration_request> so
-	//      the LLM dispatches to scenario D (freee + Drive). The response
-	//      is parsed into kind:"registration" and rendered as a status
-	//      card; from there the user can keep talking to the LLM via the
-	//      revise form switched to followup mode.
+	//      kind:"journal") triggers handleRegister(), which sends a
+	//      <registration_request> message so the LLM dispatches to
+	//      scenario D (freee + Drive). The response is parsed as
+	//      kind:"registration".
+	//   6. Once kind:"registration" returns with status:"success", a
+	//      "完了にする" button (rendered inside RegistrationResult)
+	//      triggers handleComplete(). That PATCHes the chat_session
+	//      title to include the #completed suffix and resets the page
+	//      to the fresh-start state so the user can start the next
+	//      journal.
 	//
-	// "Pending tasks" section is driven by the SSR loader in
-	// +page.server.ts (Promise streaming) which lists chat_session rows
-	// with the [keiri] title prefix and no completion suffix. Clicking
-	// a card opens TaskDetailDialog so the user can mark it completed
-	// (moving it to /tasks) or delete it.
+	// State persistence:
+	//   The active chat_session id is round-tripped through the URL as
+	//   ?chatSessionId=<uuid>. The SSR loader in +page.server.ts fetches
+	//   the corresponding chat_session row and exposes it as
+	//   `data.restoredSession`. We hydrate `uploadedRefs`,
+	//   `currentChatSessionId`, `currentTitle`, `isCurrentCompleted`
+	//   and `parseResult` from that snapshot so a reload (or a click
+	//   from /tasks pending tab) puts the user back into the same
+	//   session.
+	//
+	//   Within a single browser session, action handlers (handleExecute /
+	//   handleRevise / handleRegister) update `currentChatSessionId` and
+	//   `currentTitle` directly from the /api/intent response, NOT via
+	//   invalidateAll(). The $effect below therefore only fires on a
+	//   genuine session swap (initial mount, or a different chatSessionId
+	//   in the URL). This avoids a race where the reactive re-run of the
+	//   loader would clobber the freshly-populated `parseResult`, which
+	//   manifested as "the journal only appears after a manual reload".
+	//
+	// Note: the previous "pending tasks" section that used to render on
+	// this page has been moved to /tasks (under the "Pending" tab). The
+	// AI Journal page now focuses on the active session only.
 
 	import { untrack } from 'svelte';
 
 	import AlertCircleIcon from '@lucide/svelte/icons/alert-circle';
+	import CheckCircle2Icon from '@lucide/svelte/icons/check-circle-2';
 	import LoaderCircleIcon from '@lucide/svelte/icons/loader-circle';
 	import PlayIcon from '@lucide/svelte/icons/play';
-	import { invalidateAll } from '$app/navigation';
+	import { replaceState } from '$app/navigation';
 
 	import JournalResult from '$lib/components/journal-result.svelte';
 	import ReceiptUploader from '$lib/components/receipt-uploader.svelte';
 	import ReviseCommentForm from '$lib/components/revise-comment-form.svelte';
-	import TaskCard from '$lib/components/task-card.svelte';
-	import TaskDetailDialog from '$lib/components/task-detail-dialog.svelte';
 	import UploadedFileList from '$lib/components/uploaded-file-list.svelte';
-	import {
-		findFreshTaskSummary,
-		toFilteredTasks,
-		type JournalTaskSummary
-	} from '$lib/journal-task';
+	import { markCompletedTitle } from '$lib/journal-title';
 	import * as m from '$lib/paraglide/messages.js';
 	import { parseJournalMessage, type ParseResult } from '$lib/parse-journal';
-	import type { PendingUploadView, UploadedFileView } from '$lib/upload-types';
+	import {
+		isUploadedFileView,
+		type PendingUploadView,
+		type UploadedFileView
+	} from '$lib/upload-types';
 	import { cn } from '$lib/utils';
 
 	import type { PageData } from './$types';
@@ -70,16 +86,27 @@
 		'複数の領収書がある場合はすべて読み取って 1 つの仕訳一覧にまとめてください。';
 	const REGISTER_PROMPT_HEADER =
 		'下記の仕訳を freee に登録し、添付の領収書を Google Drive にアップロードしてください。';
+	// How long the "Journal completed" banner stays visible after the
+	// user marks a session as completed. Long enough to register the
+	// transition but short enough that it does not block the next
+	// upload flow.
+	const COMPLETED_BANNER_DURATION_MS = 5000;
 
 	let { data }: { data: PageData } = $props();
 
+	// The following $state declarations seed their initial value from
+	// `data` so the SSR-rendered HTML and the post-hydration client
+	// state agree. Subsequent navigations that re-run the loader are
+	// reconciled by the $effect below (search for `data.restoredSession`).
+	// We silence Svelte's `state_referenced_locally` warning here because
+	// the "only captures the initial value" semantics are intentional —
+	// after the first hydration the state is owned by the user's edits.
 	let pendingUploads = $state<PendingUploadView[]>([]);
-	let uploadedRefs = $state<UploadedFileView[]>([]);
+	// svelte-ignore state_referenced_locally
+	let uploadedRefs = $state<UploadedFileView[]>(data.restoredSession?.uploadedRefs ?? []);
 	// Counter of in-flight DELETE /api/upload/{fileId} round-trips.
 	// Folded into canExecute so the user cannot race a pending delete
-	// against "Generate journal": if the delete fails after the journal
-	// was already submitted, the file gets restored to the queue but
-	// the journal was generated without it, leaving the UI inconsistent.
+	// against "Generate journal".
 	let deletesInFlight = $state(0);
 
 	let isExecuting = $state(false);
@@ -87,12 +114,23 @@
 	// spinner / loading text inside the page banner while the rest of
 	// the page stays in the generic "isExecuting" state.
 	let registerInFlight = $state(false);
-	let errorMessage = $state<string | null>(null);
-	let currentChatSessionId = $state<string | null>(null);
-	let parseResult = $state<ParseResult | null>(null);
-
-	let detailOpen = $state(false);
-	let detailTask = $state<JournalTaskSummary | null>(null);
+	let isCompleting = $state(false);
+	// svelte-ignore state_referenced_locally
+	let errorMessage = $state<string | null>(data.restoreError);
+	// svelte-ignore state_referenced_locally
+	let currentChatSessionId = $state<string | null>(data.restoredSession?.id ?? null);
+	// svelte-ignore state_referenced_locally
+	let currentTitle = $state<string | null>(data.restoredSession?.title ?? null);
+	// svelte-ignore state_referenced_locally
+	let isCurrentCompleted = $state<boolean>(data.restoredSession?.isCompleted ?? false);
+	// svelte-ignore state_referenced_locally
+	let parseResult = $state<ParseResult | null>(
+		data.restoredSession?.rawAssistantText
+			? parseJournalMessage(data.restoredSession.rawAssistantText)
+			: null
+	);
+	let completedBannerVisible = $state(false);
+	let completedBannerTimeout: ReturnType<typeof setTimeout> | null = null;
 
 	// The revise form switches between two modes depending on the most
 	// recent assistant payload kind. Derive it once so the form and the
@@ -113,22 +151,109 @@
 		return null;
 	});
 
+	// Completion is only meaningful once freee + Drive reported success.
+	// Anything else (journal-only, registration with status !== 'success',
+	// or in-flight work) hides the button. The title check rejects both
+	// null AND empty string because deriveJournalTaskSummary coerces a
+	// null chat_session.title to ''. Without the truthiness check
+	// canComplete would flip true while handleComplete's `!currentTitle`
+	// guard silently bails, leaving the button visibly enabled but inert.
+	const canComplete = $derived(
+		currentChatSessionId !== null &&
+			!!currentTitle &&
+			!isCurrentCompleted &&
+			parseResult?.kind === 'registration' &&
+			parseResult.result.status === 'success' &&
+			!isExecuting &&
+			!isCompleting
+	);
+
+	// Re-hydrate editable state when the SSR loader returns a *different*
+	// session than the client currently holds. This fires only on real
+	// session swaps:
+	//   - initial mount with `?chatSessionId=...` in the URL,
+	//   - URL change after navigating from /tasks pending tab.
+	// Action handlers (handleExecute / handleRevise / handleRegister)
+	// no longer call invalidateAll(), so the "same id" branch reliably
+	// short-circuits and the freshly-populated parseResult is preserved.
+	// untrack() guards the read of `currentChatSessionId` because the
+	// effect must not re-fire when its own writes update that signal.
+	$effect(() => {
+		const restored = data.restoredSession;
+		const restoredId = restored?.id ?? null;
+		const currentId = untrack(() => currentChatSessionId);
+
+		if (restoredId === currentId) {
+			// Same session as the client already holds. Do nothing on
+			// purpose: rewriting parseResult / uploadedRefs from a
+			// stale snapshot would clobber whatever the latest action
+			// handler just set. `currentTitle` / `isCurrentCompleted`
+			// are also kept in sync by the action handlers themselves
+			// (via the /api/intent response or via handleComplete), so
+			// there is no remaining server-only field that this effect
+			// needs to copy over.
+			return;
+		}
+
+		if (restored) {
+			currentChatSessionId = restored.id;
+			currentTitle = restored.title;
+			isCurrentCompleted = restored.isCompleted;
+			uploadedRefs = restored.uploadedRefs;
+			pendingUploads = [];
+			parseResult = restored.rawAssistantText
+				? parseJournalMessage(restored.rawAssistantText)
+				: null;
+			completedBannerVisible = false;
+			errorMessage = data.restoreError;
+		} else {
+			currentChatSessionId = null;
+			currentTitle = null;
+			isCurrentCompleted = false;
+			uploadedRefs = [];
+			pendingUploads = [];
+			parseResult = null;
+			errorMessage = data.restoreError;
+		}
+	});
+
 	function generateLocalId(): string {
 		return typeof crypto !== 'undefined' && 'randomUUID' in crypto
 			? crypto.randomUUID()
 			: `local-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 	}
 
-	function isUploadedFileView(value: unknown): value is UploadedFileView {
-		if (!value || typeof value !== 'object') return false;
-		const v = value as Record<string, unknown>;
-		return (
-			typeof v.fileId === 'string' &&
-			v.fileId.length > 0 &&
-			typeof v.filename === 'string' &&
-			typeof v.mimeType === 'string' &&
-			typeof v.sizeBytes === 'number'
-		);
+	function syncChatSessionIdToUrl(sessionId: string | null): void {
+		if (typeof window === 'undefined') return;
+		const params = new URLSearchParams(window.location.search);
+		if (sessionId) {
+			params.set('chatSessionId', sessionId);
+		} else {
+			params.delete('chatSessionId');
+		}
+		const queryString = params.toString();
+		const nextHref = queryString
+			? `${window.location.pathname}?${queryString}`
+			: window.location.pathname;
+		const currentHref = window.location.pathname + window.location.search;
+		if (currentHref === nextHref) return;
+		// Use replaceState (not pushState) because the chat session id is
+		// a refinement of the "AI Journal" page rather than a new history
+		// entry; we don't want the back button to step through every
+		// turn of the same session.
+		replaceState(nextHref, {});
+	}
+
+	function showCompletedBanner(): void {
+		completedBannerVisible = true;
+		if (typeof window === 'undefined') return;
+		if (completedBannerTimeout) {
+			clearTimeout(completedBannerTimeout);
+		}
+		completedBannerTimeout = setTimeout(() => {
+			completedBannerVisible = false;
+			completedBannerTimeout = null;
+		}, COMPLETED_BANNER_DURATION_MS);
 	}
 
 	async function uploadOne(file: File, localId: string): Promise<void> {
@@ -205,17 +330,9 @@
 		// Snapshot the file ids that preceded the target so a later
 		// restore can reconstruct the original ordering even if other
 		// concurrent removes have mutated the array in the meantime.
-		// A bare numeric index would be stale once a sibling restore
-		// shifted the array, yielding orderings like [B, A, C] instead
-		// of [A, B, C].
 		const predecessorIds = uploadedRefs.slice(0, targetIndex).map((ref) => ref.fileId);
 		uploadedRefs = uploadedRefs.filter((ref) => ref.fileId !== fileId);
 
-		// Restore the entry to its original relative position when the
-		// server-side delete fails so the user can retry; otherwise the
-		// file would disappear from the UI while still occupying d6e
-		// Storage. We anchor on the rightmost surviving predecessor so
-		// concurrent restores reconverge on the original order.
 		const restore = () => {
 			if (uploadedRefs.some((ref) => ref.fileId === fileId)) return;
 			const predecessorSet = new Set(predecessorIds);
@@ -234,12 +351,6 @@
 			const response = await fetch(`/api/upload/${encodeURIComponent(fileId)}`, {
 				method: 'DELETE'
 			});
-			// If hooks.server.ts redirected the request to /auth/login (e.g.
-			// the session expired mid-interaction), the browser may follow
-			// the chain into a 200 HTML response. response.ok is then true
-			// but the file was never actually deleted on d6e Storage —
-			// validate the JSON payload shape to detect this case and
-			// restore the entry so it does not orphan the blob.
 			const payload: unknown = await response.json().catch(() => null);
 			if (!response.ok) {
 				const detail = `HTTP ${response.status}`;
@@ -270,7 +381,7 @@
 		message: string,
 		fileRefs: UploadedFileView[],
 		chatSessionId: string | null
-	): Promise<{ rawMessage: string; chatSessionId: string | null }> {
+	): Promise<{ rawMessage: string; chatSessionId: string | null; title: string | null }> {
 		const requestBody: Record<string, unknown> = {
 			message,
 			inputFileRefs: fileRefs,
@@ -289,13 +400,24 @@
 			const detail = errPayload && typeof errPayload.error === 'string' ? errPayload.error : '';
 			throw new Error(`Execute-by-intent failed (${response.status}): ${detail}`);
 		}
-		const ok = payload as { success?: boolean; message?: string; chatSessionId?: string };
+		// `title` is included by the server when chat_session persistence
+		// succeeded; it is the post-PATCH value of chat_session.title so
+		// the caller can update `currentTitle` directly. Falls back to
+		// null when persistence failed or title was unchanged and null
+		// at rest.
+		const ok = payload as {
+			success?: boolean;
+			message?: string;
+			chatSessionId?: string;
+			title?: string;
+		};
 		if (!ok.success) {
 			throw new Error(ok.message ?? 'execute-by-intent returned success=false');
 		}
 		return {
 			rawMessage: ok.message ?? '',
-			chatSessionId: ok.chatSessionId ?? null
+			chatSessionId: ok.chatSessionId ?? null,
+			title: ok.title ?? null
 		};
 	}
 
@@ -305,11 +427,30 @@
 		isExecuting = true;
 		parseResult = null;
 		currentChatSessionId = null;
+		currentTitle = null;
+		isCurrentCompleted = false;
+		completedBannerVisible = false;
 		try {
-			const { rawMessage, chatSessionId } = await callIntent(CREATE_PROMPT, uploadedRefs, null);
+			const { rawMessage, chatSessionId, title } = await callIntent(
+				CREATE_PROMPT,
+				uploadedRefs,
+				null
+			);
 			parseResult = parseJournalMessage(rawMessage);
 			currentChatSessionId = chatSessionId;
-			await invalidateAll();
+			// `title` comes from the /api/intent response and tells us
+			// the freshly created chat_session.title. Setting it here
+			// (instead of going through invalidateAll() + the restore
+			// $effect) is what stopped the "results only appear after a
+			// reload" bug — see the header comment on this file.
+			currentTitle = title;
+			// A newly created session is never completed by construction:
+			// the title is built via buildJournalTitle, which never adds
+			// the #completed suffix.
+			isCurrentCompleted = false;
+			if (chatSessionId) {
+				syncChatSessionIdToUrl(chatSessionId);
+			}
 		} catch (err) {
 			const detail = err instanceof Error ? err.message : String(err);
 			errorMessage = detail;
@@ -320,7 +461,13 @@
 	}
 
 	async function handleRevise(comment: string): Promise<void> {
-		if (uploadedRefs.length === 0 || !parseResult) {
+		// Note: uploadedRefs may legitimately be empty here when a legacy
+		// chat_session (persisted before inputFileRefs were embedded in
+		// user UIMessages) is restored via ?chatSessionId=<uuid>. The
+		// revise form is still meaningful in that case — the user can
+		// nudge the LLM about the existing journal without re-attaching
+		// receipts — so we only gate on parseResult.
+		if (!parseResult) {
 			errorMessage = 'No previous assistant response to revise.';
 			return;
 		}
@@ -356,14 +503,23 @@
 				message = comment;
 			}
 
-			const { rawMessage, chatSessionId } = await callIntent(
+			const { rawMessage, chatSessionId, title } = await callIntent(
 				message,
 				uploadedRefs,
 				currentChatSessionId
 			);
 			parseResult = parseJournalMessage(rawMessage);
-			if (chatSessionId) currentChatSessionId = chatSessionId;
-			await invalidateAll();
+			if (chatSessionId) {
+				currentChatSessionId = chatSessionId;
+				syncChatSessionIdToUrl(chatSessionId);
+			}
+			// The server regenerates the title when a revise turn
+			// changes the parsed payload (entry count / total). Apply
+			// the new value so the [keiri] header card stays in sync
+			// without going through invalidateAll().
+			if (title !== null) {
+				currentTitle = title;
+			}
 		} catch (err) {
 			const detail = err instanceof Error ? err.message : String(err);
 			errorMessage = detail;
@@ -390,14 +546,22 @@
 				'</registration_request>'
 			].join('\n');
 
-			const { rawMessage, chatSessionId } = await callIntent(
+			const { rawMessage, chatSessionId, title } = await callIntent(
 				message,
 				uploadedRefs,
 				currentChatSessionId
 			);
 			parseResult = parseJournalMessage(rawMessage);
-			if (chatSessionId) currentChatSessionId = chatSessionId;
-			await invalidateAll();
+			if (chatSessionId) {
+				currentChatSessionId = chatSessionId;
+				syncChatSessionIdToUrl(chatSessionId);
+			}
+			// The register turn rarely changes the journal payload (and
+			// therefore the title), but apply whatever the server
+			// reports so the local view stays authoritative.
+			if (title !== null) {
+				currentTitle = title;
+			}
 		} catch (err) {
 			const detail = err instanceof Error ? err.message : String(err);
 			errorMessage = detail;
@@ -408,44 +572,52 @@
 		}
 	}
 
-	function handleTaskClick(task: JournalTaskSummary): void {
-		detailTask = task;
-		detailOpen = true;
+	async function handleComplete(): Promise<void> {
+		if (!canComplete || !currentChatSessionId || !currentTitle) return;
+		errorMessage = null;
+		isCompleting = true;
+		try {
+			const targetTitle = markCompletedTitle(currentTitle);
+			const response = await fetch(
+				`/api/chat-sessions/${encodeURIComponent(currentChatSessionId)}`,
+				{
+					method: 'PATCH',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ title: targetTitle })
+				}
+			);
+			const payload = await response.json().catch(() => ({}));
+			if (!response.ok) {
+				const detail =
+					payload && typeof (payload as { error?: unknown }).error === 'string'
+						? (payload as { error: string }).error
+						: `HTTP ${response.status}`;
+				throw new Error(detail);
+			}
+
+			// Reset client state immediately so the page returns to the
+			// fresh-start UI. There is no need to re-fetch the loader
+			// data here: the cleared `currentChatSessionId` and the
+			// URL update below already produce the correct $effect
+			// behaviour on the next genuine navigation, and the /tasks
+			// page does its own fetch when the user opens it.
+			parseResult = null;
+			uploadedRefs = [];
+			pendingUploads = [];
+			currentChatSessionId = null;
+			currentTitle = null;
+			isCurrentCompleted = false;
+			showCompletedBanner();
+
+			syncChatSessionIdToUrl(null);
+		} catch (err) {
+			const detail = err instanceof Error ? err.message : String(err);
+			errorMessage = detail;
+			console.error('[ai-journal-page] handleComplete failed:', detail);
+		} finally {
+			isCompleting = false;
+		}
 	}
-
-	async function handleDialogMutate(): Promise<void> {
-		await invalidateAll();
-	}
-
-	// Promise streaming: SvelteKit streams the resolved value once the
-	// load function in +page.server.ts completes. We hydrate the task
-	// summary list lazily so the page chrome (header, uploader, error
-	// banner) stays interactive even when d6e is slow.
-	const pendingResultPromise = $derived(data.pendingTasks$);
-	const pendingTasksPromise = $derived(
-		pendingResultPromise.then((result) => toFilteredTasks(result, { completed: false }))
-	);
-
-	// Keep the open dialog in sync with the freshest server snapshot so
-	// the journal table inside it reflects any revise round-trip that
-	// happened while the dialog was open. detailTask is read via
-	// untrack() because the .then() callback writes a fresh object back
-	// to it; tracking would re-fire the effect and loop forever.
-	$effect(() => {
-		if (!detailOpen) return;
-		if (!untrack(() => detailTask)) return;
-		let cancelled = false;
-		pendingResultPromise.then((result) => {
-			if (cancelled) return;
-			const current = untrack(() => detailTask);
-			if (!current) return;
-			const updated = findFreshTaskSummary(result, current.id);
-			if (updated) detailTask = updated;
-		});
-		return () => {
-			cancelled = true;
-		};
-	});
 </script>
 
 <div class="space-y-8 p-6 lg:p-10">
@@ -454,7 +626,27 @@
 		<p class="text-sm text-muted-foreground">{m.journal_description()}</p>
 	</section>
 
-	{#if !parseResult}
+	{#if completedBannerVisible}
+		<!--
+			Use `text-success` (the success accent) rather than
+			`text-success-foreground` (which is the near-white meant to
+			sit on top of a filled success button). The previous setup
+			put near-white text on the `bg-success/10` tinted background
+			and was effectively unreadable. The destructive error banner
+			at the bottom of this page uses the same pattern.
+		-->
+		<div
+			class={cn(
+				'flex items-center gap-3 rounded-xl border border-success/40 bg-success/10 p-4 text-sm font-medium text-success'
+			)}
+			role="status"
+		>
+			<CheckCircle2Icon class="size-5 text-success" aria-hidden="true" />
+			<span>{m.journal_complete_banner()}</span>
+		</div>
+	{/if}
+
+	{#if !parseResult && !isExecuting}
 		<section class="space-y-4">
 			<h2 class="text-lg font-semibold">{m.journal_upload_heading()}</h2>
 			<ReceiptUploader onfiles={handleFiles} disabled={isExecuting} />
@@ -489,7 +681,7 @@
 				</div>
 			</div>
 		</section>
-	{:else}
+	{:else if parseResult}
 		<section class="space-y-4">
 			<UploadedFileList
 				pending={pendingUploads}
@@ -508,6 +700,13 @@
 		>
 			<LoaderCircleIcon class="size-5 animate-spin text-primary" aria-hidden="true" />
 			<span>{registerInFlight ? m.journal_register_loading() : m.journal_loading()}</span>
+		</div>
+	{:else if isCompleting}
+		<div
+			class="flex items-center gap-3 rounded-xl border bg-card p-4 text-sm text-muted-foreground shadow-sm"
+		>
+			<LoaderCircleIcon class="size-5 animate-spin text-primary" aria-hidden="true" />
+			<span>{m.journal_complete_loading()}</span>
 		</div>
 	{/if}
 
@@ -531,53 +730,19 @@
 			<JournalResult
 				parsed={parseResult}
 				onRegister={handleRegister}
-				registerDisabled={isExecuting}
+				registerDisabled={isExecuting || isCompleting || uploadedRefs.length === 0}
 				{registerInFlight}
+				onComplete={handleComplete}
+				completeDisabled={!canComplete}
+				completeInFlight={isCompleting}
 			/>
 			{#if parseResult.kind === 'journal' || parseResult.kind === 'registration'}
-				<ReviseCommentForm onsubmit={handleRevise} disabled={isExecuting} mode={reviseMode} />
+				<ReviseCommentForm
+					onsubmit={handleRevise}
+					disabled={isExecuting || isCompleting}
+					mode={reviseMode}
+				/>
 			{/if}
 		</section>
 	{/if}
-
-	<section class="space-y-4">
-		<h2 class="text-lg font-semibold">{m.journal_pending_section()}</h2>
-		{#await pendingTasksPromise}
-			<div class="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-				{#each Array(3) as _, index (index)}
-					<div
-						class="flex h-32 flex-col gap-2 rounded-xl border bg-card p-4 shadow-sm"
-						aria-busy="true"
-					>
-						<div class="h-3 w-1/3 animate-pulse rounded bg-muted"></div>
-						<div class="h-4 w-2/3 animate-pulse rounded bg-muted"></div>
-						<div class="mt-auto h-3 w-1/2 animate-pulse rounded bg-muted"></div>
-					</div>
-				{/each}
-			</div>
-		{:then resolved}
-			{#if !resolved.ok}
-				<div
-					class={cn(
-						'flex items-start gap-3 rounded-xl border border-warning/40 bg-warning/5 p-4 text-sm text-warning-foreground'
-					)}
-				>
-					<AlertCircleIcon class="mt-0.5 size-5 shrink-0" aria-hidden="true" />
-					<p class="break-words">
-						{m.task_list_error({ detail: resolved.error ?? 'unknown' })}
-					</p>
-				</div>
-			{:else if resolved.tasks.length === 0}
-				<p class="text-sm text-muted-foreground">{m.journal_pending_empty()}</p>
-			{:else}
-				<div class="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-					{#each resolved.tasks as task (task.id)}
-						<TaskCard {task} onclick={handleTaskClick} />
-					{/each}
-				</div>
-			{/if}
-		{/await}
-	</section>
 </div>
-
-<TaskDetailDialog bind:open={detailOpen} task={detailTask} onMutate={handleDialogMutate} />

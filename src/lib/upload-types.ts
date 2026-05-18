@@ -25,3 +25,24 @@ export interface UploadedFileView {
 	mimeType: string;
 	sizeBytes: number;
 }
+
+/**
+ * Runtime guard for the UploadedFileView shape. Shared by the AI Journal
+ * page (which validates /api/upload responses before adding them to the
+ * queue) and journal-task.ts (which validates inputFileRefs read back
+ * from chat_session jsonb). The two contexts use different type names —
+ * UploadedFileView vs IntentInputFileRef — but the shape is identical,
+ * so a single guard keeps the field checks from drifting if a new field
+ * is ever added to one side.
+ */
+export function isUploadedFileView(value: unknown): value is UploadedFileView {
+	if (!value || typeof value !== 'object') return false;
+	const v = value as Record<string, unknown>;
+	return (
+		typeof v.fileId === 'string' &&
+		v.fileId.length > 0 &&
+		typeof v.filename === 'string' &&
+		typeof v.mimeType === 'string' &&
+		typeof v.sizeBytes === 'number'
+	);
+}

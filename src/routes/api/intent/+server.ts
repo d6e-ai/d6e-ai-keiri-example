@@ -14,7 +14,25 @@
 //     The "[keiri] " or "[keiri-ask] " prefix is chosen by `persistAs`.
 //   - On a revise turn (chatSessionId present): fetch the existing row,
 //     append a user UIMessage + an assistant UIMessage, then PATCH the
-//     whole array. The title is preserved.
+//     whole array. The title is regenerated from the new assistant text
+//     when the original was a [keiri] journal title and the new payload
+//     parsed successfully; otherwise the existing title is preserved.
+//   - Every user UIMessage carries an optional `inputFileRefs` array
+//     (when at least one file was attached) so the AI Journal page can
+//     re-hydrate `uploadedRefs` from `?chatSessionId=<uuid>`. The shape
+//     is the same IntentInputFileRef object we send upstream, so the
+//     restore path is a straight read of the most recent user turn's
+//     `inputFileRefs` via extractLatestInputFileRefs().
+//
+// Response shape:
+//   The handler returns the upstream IntentResponse plus three optional
+//   fields: `chatSessionId`, `title` and `persistError`. `title` carries
+//   the value the chat_session row will hold after this turn — the
+//   regenerated title for revise turns where the journal changed, the
+//   freshly built title for new sessions, or undefined when persistence
+//   failed. The browser uses it to populate `currentTitle` directly so
+//   the page no longer has to call `invalidateAll()` to learn the title
+//   (avoiding a reactive race on the journal page).
 //
 // Persistence failures are isolated from the LLM response: we still
 // return success / message / files to the browser even if the
@@ -110,12 +128,30 @@ function makeUuid(): string {
 	return crypto.randomUUID();
 }
 
-function buildUserUiMessage(message: string): ChatSessionMessage {
-	return {
+function buildUserUiMessage(
+	message: string,
+	inputFileRefs: IntentInputFileRef[]
+): ChatSessionMessage {
+	const ui: ChatSessionMessage = {
 		id: makeUuid(),
 		role: 'user',
 		parts: [{ type: 'text', text: message }]
 	};
+	if (inputFileRefs.length > 0) {
+		// Snapshot the refs into a plain object array so the value
+		// survives JSON.stringify cleanly when d6e persists the row.
+		// Extending ChatSessionMessage via a property assignment keeps
+		// the loose Record<string, unknown> shape exported from
+		// d6e-client.ts; consumers narrow back via journal-task.ts's
+		// extractLatestInputFileRefs() / isIntentInputFileRef() pair.
+		(ui as Record<string, unknown>).inputFileRefs = inputFileRefs.map((ref) => ({
+			fileId: ref.fileId,
+			filename: ref.filename,
+			mimeType: ref.mimeType,
+			sizeBytes: ref.sizeBytes
+		}));
+	}
+	return ui;
 }
 
 function buildAssistantUiMessage(text: string): ChatSessionMessage {
@@ -124,6 +160,19 @@ function buildAssistantUiMessage(text: string): ChatSessionMessage {
 		role: 'assistant',
 		parts: [{ type: 'text', text }]
 	};
+}
+
+// Outcome of a persistTurn call. `title` is the value the chat_session
+// row holds after the operation: either the freshly built title for a
+// new session, the regenerated title for a revise turn that changed
+// the parsed payload, or the previously stored title when neither
+// applied. `persistError` is set (with `title` left undefined) when the
+// d6e write failed; the route handler still returns success to the
+// browser but the caller can decide what to surface.
+interface PersistTurnResult {
+	chatSessionId: string | undefined;
+	title?: string;
+	persistError?: string;
 }
 
 /**
@@ -139,21 +188,23 @@ async function persistTurn(args: {
 	accessToken: string;
 	workspaceId: string;
 	userMessage: string;
+	inputFileRefs: IntentInputFileRef[];
 	assistantText: string;
 	chatSessionId: string | undefined;
 	persistAs: PersistKind;
-}): Promise<{ chatSessionId: string | undefined; persistError?: string }> {
+}): Promise<PersistTurnResult> {
 	const {
 		callerTag,
 		accessToken,
 		workspaceId,
 		userMessage,
+		inputFileRefs,
 		assistantText,
 		chatSessionId,
 		persistAs
 	} = args;
 
-	const userUiMessage = buildUserUiMessage(userMessage);
+	const userUiMessage = buildUserUiMessage(userMessage, inputFileRefs);
 	const assistantUiMessage = buildAssistantUiMessage(assistantText);
 
 	if (chatSessionId) {
@@ -190,7 +241,13 @@ async function persistTurn(args: {
 			}
 
 			await updateChatSession(callerTag, accessToken, chatSessionId, patch);
-			return { chatSessionId };
+			// Final title visible to the client after this PATCH: either
+			// the regenerated value (when we set patch.title) or the
+			// existing one. We never report an empty string upward — if
+			// existing.title was null we drop the field so the client
+			// keeps whatever value it already had.
+			const finalTitle = patch.title ?? existingTitle;
+			return finalTitle ? { chatSessionId, title: finalTitle } : { chatSessionId };
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err);
 			console.error(
@@ -216,7 +273,14 @@ async function persistTurn(args: {
 			title,
 			messages: [userUiMessage, assistantUiMessage]
 		});
-		return { chatSessionId: created.id };
+		// d6e's createChatSession echoes the row back. Prefer the value
+		// it returns (which is what subsequent reads will see) but fall
+		// back to the title we built locally when the row's title field
+		// happens to be null.
+		return {
+			chatSessionId: created.id,
+			title: created.title ?? title
+		};
 	} catch (err) {
 		const msg = err instanceof Error ? err.message : String(err);
 		console.error(
@@ -282,6 +346,7 @@ export const POST: RequestHandler = async (event) => {
 			accessToken,
 			workspaceId,
 			userMessage: body.message,
+			inputFileRefs,
 			assistantText: upstream.message ?? '',
 			chatSessionId,
 			persistAs
@@ -289,11 +354,18 @@ export const POST: RequestHandler = async (event) => {
 
 		const response: IntentResponse & {
 			chatSessionId?: string;
+			title?: string;
 			persistError?: string;
 		} = {
 			...upstream
 		};
 		if (persistResult.chatSessionId) response.chatSessionId = persistResult.chatSessionId;
+		// `title` is the post-persist value of chat_session.title. The
+		// browser uses it to update `currentTitle` directly so the AI
+		// Journal page no longer has to call invalidateAll() after
+		// every turn (which was triggering a $effect race that wiped
+		// the freshly populated parseResult).
+		if (persistResult.title) response.title = persistResult.title;
 		if (persistResult.persistError) response.persistError = persistResult.persistError;
 
 		return json(response);
