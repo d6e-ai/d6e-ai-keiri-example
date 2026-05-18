@@ -176,6 +176,5 @@ Conventions when editing them:
   (e.g. `[\`src/lib/server/d6e-client.ts\`](../../src/lib/server/d6e-client.ts)`).
   When you change a referenced module, update the citing skill in
   the same PR.
-- `skills.sh` auto-discovers any public repository that exposes
-  `skills/<name>/SKILL.md` files. Keep the repository visibility set
-  to **public** so the listings stay live.
+- `skills.sh` auto-discovers `skills/<name>/SKILL.md` files in this
+  repository and surfaces them as listings.

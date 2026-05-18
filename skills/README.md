@@ -52,17 +52,14 @@ equivalent in Claude Code) to verify the skills are available.
 ## Discovery & Marketplace Listing
 
 These skills are auto-discovered by [skills.sh](https://skills.sh)
-as long as the repository is **public** and exposes
-`skills/<name>/SKILL.md` files. They appear under:
+from the `skills/<name>/SKILL.md` files in this repository. They
+appear under:
 
 - <https://skills.sh/d6e-ai/d6e-ai-keiri-example/d6e-auth-integration>
 - <https://skills.sh/d6e-ai/d6e-ai-keiri-example/d6e-workspace-api-client>
 - <https://skills.sh/d6e-ai/d6e-ai-keiri-example/d6e-prompt-driven-ui>
 
-Repository maintainers: if the listing is missing, confirm the
-repository visibility is set to public (_Settings → General →
-Danger Zone → Change visibility_) and wait for the next skills.sh
-crawl cycle.
+If a listing is missing, wait for the next skills.sh crawl cycle.
 
 ## Why These Three?
 
