@@ -98,11 +98,16 @@
 	"ask_submit": "Ask",
 	"ask_loading": "AI is generating a response...",
 	"common_loading": "Loading...",
+	"auth_login_title": "Sign in",
+	"auth_login_lead": "Sign in with your d6e account to continue.",
+	"auth_login_app_overview": "An AI accounting demo that turns receipt images into freee-ready journal entries.",
+	"auth_login_provider_hint": "If you do not have a d6e account yet, please contact your workspace administrator.",
+	"auth_login_sign_in_with_d6e": "Sign in with d6e",
 	"auth_no_access_title": "No access to this workspace",
 	"auth_no_access_lead": "Login succeeded, but your account is not a member of the workspace this app is bound to.",
 	"auth_no_access_body": "Please contact your workspace administrator.",
 	"auth_no_access_admin_hint": "Once the administrator adds you to the workspace, sign in again to start using the app.",
-	"auth_login_retry": "Sign in again",
+	"auth_no_access_switch_account": "Sign out and use another account",
 	"auth_logout": "Sign out",
 	"auth_user_label": "Signed in as"
 }

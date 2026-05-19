@@ -98,11 +98,16 @@
 	"ask_submit": "質問する",
 	"ask_loading": "AI が回答を生成しています...",
 	"common_loading": "読み込み中...",
+	"auth_login_title": "ログイン",
+	"auth_login_lead": "d6e アカウントでログインして利用を開始してください。",
+	"auth_login_app_overview": "領収書画像から freee 登録用の仕訳一覧を生成する AI 経理デモです。",
+	"auth_login_provider_hint": "d6e アカウントをお持ちでない場合はワークスペースの管理者にお問い合わせください。",
+	"auth_login_sign_in_with_d6e": "d6e で認証",
 	"auth_no_access_title": "ワークスペースへのアクセス権がありません",
 	"auth_no_access_lead": "ログインには成功しましたが、このアプリが連携しているワークスペースに参加していません。",
 	"auth_no_access_body": "ワークスペースの管理者にお問い合わせください。",
 	"auth_no_access_admin_hint": "管理者がワークスペースにあなたを追加した後、再度ログインすると利用できるようになります。",
-	"auth_login_retry": "再度ログイン",
+	"auth_no_access_switch_account": "ログアウトして別アカウントでログイン",
 	"auth_logout": "ログアウト",
 	"auth_user_label": "ログイン中のユーザー"
 }
