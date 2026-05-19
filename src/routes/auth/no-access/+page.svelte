@@ -7,10 +7,21 @@
 	// page is reachable by anonymous browsers as well (no infinite
 	// redirect loop with hooks.server.ts).
 	//
-	// The page deliberately does not display any contact information
-	// (per requirement); it just tells the user to reach out to their
-	// workspace administrator.
+	// Main specifications:
+	//   - Includes a POST form to /auth/logout (mirrors the sidebar
+	//     pattern in app-sidebar.svelte) so the user can fully sign
+	//     out of d6e-auth and then sign in with a different account.
+	//     A plain "retry login" link is intentionally not offered:
+	//     because d6e-auth's session cookie survives, clicking such a
+	//     link would silently re-authenticate the same account and
+	//     loop the user right back here.
+	//
+	// Limitations:
+	//   - The page deliberately does not display any contact information
+	//     (per requirement); it just tells the user to reach out to
+	//     their workspace administrator.
 
+	import LogOutIcon from '@lucide/svelte/icons/log-out';
 	import ShieldAlertIcon from '@lucide/svelte/icons/shield-alert';
 
 	import * as m from '$lib/paraglide/messages.js';
@@ -33,13 +44,14 @@
 			</div>
 		</div>
 
-		<div class="flex gap-3">
-			<a
-				href="/auth/login"
-				class="inline-flex items-center justify-center rounded-md border border-border bg-card px-4 py-2 text-sm font-medium text-foreground shadow-sm hover:bg-muted"
+		<form method="POST" action="/auth/logout" class="flex gap-3">
+			<button
+				type="submit"
+				class="inline-flex items-center justify-center gap-2 rounded-md border border-border bg-card px-4 py-2 text-sm font-medium text-foreground shadow-sm hover:bg-muted"
 			>
-				{m.auth_login_retry()}
-			</a>
-		</div>
+				<LogOutIcon class="size-4" aria-hidden="true" />
+				<span>{m.auth_no_access_switch_account()}</span>
+			</button>
+		</form>
 	</section>
 </div>
