@@ -54,3 +54,10 @@
 ## コミットメッセージ
 
 - 英語のみ。AI 由来の署名や "Made with X" の類は付けない。
+
+## Agent Skills (`skills/`)
+
+- `skills/<skill-name>/SKILL.md` 形式で 3 つの Agent Skill を同梱している (`d6e-auth-integration` / `d6e-workspace-api-client` / `d6e-prompt-driven-ui`)。これらはリポジトリが public であれば `skills.sh` が自動掲載するため、リポジトリの公開状態を維持する。
+- 各 `SKILL.md` は本リポジトリの実装 (`src/lib/server/**`, `src/routes/auth/**`, `src/routes/api/**`, `scripts/prompts/**` など) を参照リンクで指す。実装側を変えたら該当 `SKILL.md` の説明 / リンクも同 PR で更新する。
+- YAML frontmatter (`name` / `description`) は英語必須。`description` には「トリガフレーズ」(when to use) を含め、`skills.sh` の検索でヒットしやすい文面にする。
+- Skill 本文は英語ベース。トリガ例だけ日本語と英語を併記して多言語チャット利用者をカバーする。
