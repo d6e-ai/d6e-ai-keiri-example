@@ -65,7 +65,7 @@ sequenceDiagram
     Token-->>App: { access_token (iss=b-button), refresh_token }
     App->>Api: GET /api/v1/workspaces/{id} (Bearer)
     Api-->>App: 200 OK (member) or 403/404 (reject)
-    App-->>Browser: Set-Cookie auth-access/refresh/user; 302 /
+    App-->>Browser: Set-Cookie auth-access/refresh/user, 302 to /
 ```
 
 The access token returned by **Stage 1 is never persisted or sent to
