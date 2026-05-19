@@ -2,13 +2,13 @@
 //
 // Purpose:
 //   Verifies the CSRF state, exchanges the authorization code for a JWT
-//   pair, RE-MINTS that pair at the b-button instance so the access
+//   pair, RE-MINTS that pair at the d6e instance so the access
 //   token has the audience expected by every Bearer endpoint under
 //   ${D6E_BASE_URL}, then probes d6e (GET /api/v1/workspaces/{id}) to
 //   make sure the user is a member of the workspace this app is tied
-//   to. On success the b-button pair is written to HTTP-only cookies
-//   and the user is bounced to the originally-requested URL. On
-//   membership failure the user is sent to /auth/no-access (cookies
+//   to. On success the d6e-instance pair is written to HTTP-only
+//   cookies and the user is bounced to the originally-requested URL.
+//   On membership failure the user is sent to /auth/no-access (cookies
 //   are cleared so they cannot see app data with a token that the d6e
 //   API would reject anyway).
 //
@@ -19,10 +19,10 @@
 //   - Token exchange runs in TWO stages:
 //       1. d6e-auth (${D6E_AUTH_URL}/api/v1/auth/token, authorization_code)
 //          -> returns a pair signed with `iss=d6e-auth`.
-//       2. b-button (${D6E_BASE_URL}/api/v1/auth/token, refresh_token)
+//       2. d6e instance (${D6E_BASE_URL}/api/v1/auth/token, refresh_token)
 //          -> returns a pair signed with the audience the API expects.
 //     This mirrors how scripts/init-workspace.mjs upgrades its admin
-//     refresh token before talking to the b-button API.
+//     refresh token before talking to the d6e instance API.
 //   - Membership probe timeout: 10 seconds. Only an explicit 403/404
 //     from the workspace probe routes the user to /auth/no-access;
 //     transient errors (network timeout, DNS failure, 5xx from d6e)
@@ -109,7 +109,7 @@ export const GET: RequestHandler = async (event) => {
 	}
 
 	// Stage 1: d6e-auth issues a pair signed with `iss=d6e-auth`. The
-	// b-button API rejects these as Bearer credentials (audience
+	// d6e instance API rejects these as Bearer credentials (audience
 	// mismatch), so we cannot use them directly.
 	let authTokens;
 	try {
@@ -124,18 +124,18 @@ export const GET: RequestHandler = async (event) => {
 		throw redirect(302, '/auth/login');
 	}
 
-	// Stage 2: hand the d6e-auth refresh token to b-button, which
-	// re-mints the pair against its own keypair. From this point on
-	// every cookie value is a b-button-signed JWT.
+	// Stage 2: hand the d6e-auth refresh token to the d6e instance,
+	// which re-mints the pair against its own keypair. From this point
+	// on every cookie value is a d6e-instance-signed JWT.
 	let tokens;
 	try {
 		tokens = await refreshAccessTokenViaBaseUrl(CALLER_TAG, authTokens.refreshToken);
 	} catch (err) {
 		if (err instanceof OauthError) {
-			console.error(`[${CALLER_TAG}] b-button token exchange failed: ${err.message}`);
+			console.error(`[${CALLER_TAG}] d6e instance token exchange failed: ${err.message}`);
 		} else {
 			const msg = err instanceof Error ? err.message : String(err);
-			console.error(`[${CALLER_TAG}] b-button token exchange unexpected error: ${msg}`);
+			console.error(`[${CALLER_TAG}] d6e instance token exchange unexpected error: ${msg}`);
 		}
 		throw redirect(302, '/auth/login');
 	}

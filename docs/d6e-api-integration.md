@@ -152,12 +152,13 @@ the d6e frontend's admin UI for now.
 ## 4. End-user OAuth2 — two-stage token exchange
 
 **Hosted by:** d6e-auth (e.g. `https://www.d6e.ai`) **and** the per-app
-b-button instance (`${D6E_BASE_URL}`). Login happens at d6e-auth; the
-resulting refresh token is then re-minted at b-button so the resulting
-access_token has the audience b-button's own Bearer endpoints accept.
-Skipping this second exchange produces a 401 on every workspace /
-file / workflow call (audience-claim mismatch — d6e-auth signs tokens
-with `iss=d6e-auth`, which b-button rejects).
+d6e instance (`${D6E_BASE_URL}`). Login happens at d6e-auth; the
+resulting refresh token is then re-minted at the d6e instance so the
+resulting access_token has the audience the d6e instance's own Bearer
+endpoints accept. Skipping this second exchange produces a 401 on
+every workspace / file / workflow call (audience-claim mismatch —
+d6e-auth signs tokens with `iss=d6e-auth`, which the d6e instance
+rejects).
 
 This app implements the OAuth2 **Authorization Code** flow per end
 user. The flow lives in three SvelteKit routes:
@@ -189,7 +190,7 @@ The response shape is the standard OAuth2 token response
 be used as a Bearer credential against `${D6E_BASE_URL}`.** This app
 discards it immediately and only keeps the `refresh_token`.
 
-### Stage 2 — b-button (`${D6E_BASE_URL}/api/v1/auth/token`)
+### Stage 2 — d6e instance (`${D6E_BASE_URL}/api/v1/auth/token`)
 
 **Request body (JSON):**
 
@@ -200,15 +201,15 @@ discards it immediately and only keeps the `refresh_token`.
 }
 ```
 
-No `client_id` / `client_secret` is required against b-button: the
-instance already knows which OAuth client backs it. b-button returns
-a fresh token pair signed for its own audience, and **only this pair
-is written to the user's cookies**.
+No `client_id` / `client_secret` is required against the d6e instance:
+the instance already knows which OAuth client backs it. The d6e
+instance returns a fresh token pair signed for its own audience, and
+**only this pair is written to the user's cookies**.
 
 All subsequent refreshes (triggered by `loadSession()` when the
-access token is within 60 seconds of expiry) use this same b-button
-endpoint, so once the user is logged in we never touch d6e-auth
-again until the next interactive login.
+access token is within 60 seconds of expiry) use this same d6e
+instance endpoint, so once the user is logged in we never touch
+d6e-auth again until the next interactive login.
 
 **Response shape (both stages):**
 
@@ -226,7 +227,7 @@ Notes:
 - Both endpoints rotate `refresh_token` on every call. The app stores
   the rotated value from stage 2 in the user's `auth-refresh` cookie
   (HTTP-only, SameSite=Lax, 30-day cap), so the next refresh
-  round-trip always uses the freshest b-button-issued token.
+  round-trip always uses the freshest d6e-instance-issued token.
 - 4xx responses cause the user to be bounced back to `/auth/login` so
   they can try again with a fresh authorization code.
 - 5xx responses are transient and surface as a 502 client error.
@@ -236,7 +237,7 @@ Notes:
 endpoints — `exchangeAuthorizationCode()` for stage 1,
 `refreshAccessTokenViaBaseUrl()` for stage 2),
 [`src/lib/server/session.ts`](../src/lib/server/session.ts) (cookie
-store and exp-based refresh, always via b-button), and
+store and exp-based refresh, always via the d6e instance), and
 [`src/hooks.server.ts`](../src/hooks.server.ts) (per-request session
 loading + unauthenticated redirect).
 
@@ -276,7 +277,7 @@ forwarded to `/auth/no-access` and never see the rest of the app. See
 token, but under a renamed env var (`D6E_INIT_REFRESH_TOKEN`) so that
 it cannot be confused with the user-facing `auth-refresh` cookie. The
 script targets `${D6E_BASE_URL}/api/v1/auth/token` directly (the
-b-button instance) because the prompt-rule POST requires a
+d6e instance) because the prompt-rule POST requires a
 cookie-authenticated admin session on the same origin.
 
 ## 5. Chat session persistence — `/api/chat-sessions`
@@ -427,6 +428,6 @@ Bearer headers and `auth-token` cookies carry the same JWT — only the
 transport differs. The app never persists the JWT server-side; every
 request reads the user's cookie via `hooks.server.ts`, which
 transparently refreshes it via `${D6E_BASE_URL}/api/v1/auth/token` when
-the JWT's `exp` is within 60 seconds. Refreshing against b-button
-(not d6e-auth) is intentional — only b-button-issued access tokens
-are accepted by the Rust API.
+the JWT's `exp` is within 60 seconds. Refreshing against the d6e
+instance (not d6e-auth) is intentional — only d6e-instance-issued
+access tokens are accepted by the d6e instance API.

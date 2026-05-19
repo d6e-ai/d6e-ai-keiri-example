@@ -7,7 +7,7 @@
 //   missing and which caller was asking for it.
 //
 // Main specifications:
-//   - getD6eUrl(): base URL of the b-button d6e instance hosting file
+//   - getD6eUrl(): base URL of the d6e instance hosting file
 //     storage, execute-by-intent, chat-sessions, etc.
 //   - getD6eWorkspaceId(): UUID of the workspace this app operates on.
 //   - getD6eAuthUrl(): base URL of the d6e-auth service that issues

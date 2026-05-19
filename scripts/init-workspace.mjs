@@ -18,7 +18,7 @@
 //   1. Exchanges D6E_INIT_REFRESH_TOKEN for a fresh access token via
 //      ${D6E_BASE_URL}/api/v1/auth/token. This endpoint accepts the
 //      refresh token on its own (no client_id / client_secret needed)
-//      and issues a token whose audience matches the same b-button
+//      and issues a token whose audience matches the same d6e
 //      instance that verifyAccessToken will validate against.
 //   2. Reads scripts/prompts/ai-keiri-prompt.md (the single source of
 //      truth for this app's LLM behaviour).

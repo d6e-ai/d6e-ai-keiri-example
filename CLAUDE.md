@@ -72,19 +72,20 @@ mandatory **two-stage token exchange**:
 1. `/auth/callback` exchanges the `code` at d6e-auth — receives an
    `access_token` signed with `iss=d6e-auth` plus a `refresh_token`.
 2. The `refresh_token` is immediately re-presented to
-   `${D6E_BASE_URL}/api/v1/auth/token` (the b-button instance), which
+   `${D6E_BASE_URL}/api/v1/auth/token` (the d6e instance), which
    returns a fresh pair signed for **its own** audience. Only this
    second pair is written to cookies.
 
 Skipping stage 2 produces a `401` on every workspace / file / workflow
-call because b-button rejects access tokens with `iss=d6e-auth`. This
-mirrors how `scripts/init-workspace.mjs` upgrades the admin
-`D6E_INIT_REFRESH_TOKEN` before talking to the b-button API.
+call because the d6e instance rejects access tokens with
+`iss=d6e-auth`. This mirrors how `scripts/init-workspace.mjs` upgrades
+the admin `D6E_INIT_REFRESH_TOKEN` before talking to the d6e instance
+API.
 
 Required env vars:
 
-- `D6E_BASE_URL`, `D6E_WORKSPACE_ID` — the d6e b-button instance and
-  workspace this app targets.
+- `D6E_BASE_URL`, `D6E_WORKSPACE_ID` — the d6e instance and workspace
+  this app targets.
 - `D6E_AUTH_URL`, `D6E_AUTH_CLIENT_ID`, `D6E_AUTH_CLIENT_SECRET`,
   `D6E_AUTH_REDIRECT_URI` — d6e-auth client credentials. The
   `registered_client.redirectUris` array on d6e-auth must include
@@ -98,9 +99,9 @@ Per-request token flow:
 1. `src/hooks.server.ts` reads the `auth-access` cookie and exposes
    it as `event.locals.accessToken`.
 2. `src/lib/server/session.ts` checks the JWT `exp` and transparently
-   refreshes via `${D6E_BASE_URL}/api/v1/auth/token` (b-button, never
-   d6e-auth) when within 60s of expiry, so the rotated cookie always
-   carries a b-button-issued access token.
+   refreshes via `${D6E_BASE_URL}/api/v1/auth/token` (the d6e
+   instance, never d6e-auth) when within 60s of expiry, so the
+   rotated cookie always carries a d6e-instance-issued access token.
 3. All d6e API helpers in `src/lib/server/d6e-client.ts` accept the
    access token as an explicit argument; route handlers pass
    `event.locals.accessToken` (via `requireAccessToken()` for type
