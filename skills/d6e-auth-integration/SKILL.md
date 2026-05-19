@@ -1,6 +1,6 @@
 ---
 name: d6e-auth-integration
-description: Implements end-user OAuth2 authentication against a d6e workspace, including the mandatory two-stage token exchange (d6e-auth -> b-button), HTTP-only session cookies, transparent refresh, and the workspace allow-list. Use when wiring `/auth/login` and `/auth/callback` routes, when seeing 401 from `${D6E_BASE_URL}` Bearer endpoints after a successful login, or when adding workspace-scoped sessions to a new d6e-connected frontend.
+description: Implements end-user OAuth2 authentication against a d6e workspace, including the mandatory two-stage token exchange (d6e-auth -> d6e instance), HTTP-only session cookies, transparent refresh, and the workspace allow-list. Use when wiring `/auth/login` and `/auth/callback` routes, when seeing 401 from `${D6E_BASE_URL}` Bearer endpoints after a successful login, or when adding workspace-scoped sessions to a new d6e-connected frontend.
 ---
 
 # d6e Auth Integration
@@ -9,12 +9,13 @@ description: Implements end-user OAuth2 authentication against a d6e workspace, 
 
 Every user-facing call this app makes to the d6e platform — file
 upload, workflow execution, chat-session CRUD — needs a JWT issued by
-the **b-button** instance (`${D6E_BASE_URL}`). Logins, however, happen
+the **d6e instance** (`${D6E_BASE_URL}`). Logins, however, happen
 at the central **d6e-auth** server (`${D6E_AUTH_URL}`), whose tokens
-carry `iss=d6e-auth` and are rejected by b-button's audience check
-with a 401. This skill teaches the OAuth2 Authorization Code flow plus
-the **mandatory second exchange** that re-mints the d6e-auth refresh
-token at b-button so every Bearer call against the Rust API succeeds.
+carry `iss=d6e-auth` and are rejected by the d6e instance's audience
+check with a 401. This skill teaches the OAuth2 Authorization Code
+flow plus the **mandatory second exchange** that re-mints the d6e-auth
+refresh token at the d6e instance so every Bearer call against the
+d6e instance API succeeds.
 
 Companion concepts covered here:
 
@@ -39,7 +40,7 @@ Apply this skill when the user says:
 - "Implement OAuth2 with d6e"
 - "Add workspace membership check"
 - "Why does logout sign me right back in?"
-- "End-user authentication for a d6e b-button instance"
+- "End-user authentication for a d6e instance"
 
 ## Core Concepts
 
@@ -50,8 +51,8 @@ sequenceDiagram
     participant Browser
     participant App as Your SvelteKit app
     participant Auth as d6e-auth<br/>(${D6E_AUTH_URL})
-    participant Token as b-button token endpoint<br/>(${D6E_BASE_URL}/api/v1/auth/token)
-    participant Api as b-button Bearer endpoints
+    participant Token as d6e instance token endpoint<br/>(${D6E_BASE_URL}/api/v1/auth/token)
+    participant Api as d6e instance Bearer endpoints
 
     Browser->>App: GET /auth/login (no cookie)
     App->>Browser: 302 to ${D6E_AUTH_URL}/auth/login?state=...
@@ -62,23 +63,23 @@ sequenceDiagram
     Auth-->>App: { access_token (iss=d6e-auth), refresh_token }
     Note over App,Token: Stage 2 — Bearer audience fix
     App->>Token: POST /api/v1/auth/token (refresh_token)
-    Token-->>App: { access_token (iss=b-button), refresh_token }
+    Token-->>App: { access_token (iss=&lt;d6e-instance&gt;), refresh_token }
     App->>Api: GET /api/v1/workspaces/{id} (Bearer)
     Api-->>App: 200 OK (member) or 403/404 (reject)
     App-->>Browser: Set-Cookie auth-access/refresh/user, 302 to /
 ```
 
 The access token returned by **Stage 1 is never persisted or sent to
-b-button**. Only the b-button-signed pair from Stage 2 lands in
-cookies. Skipping Stage 2 is the single most common cause of "login
-works but every subsequent API call returns 401".
+the d6e instance**. Only the d6e-instance-signed pair from Stage 2
+lands in cookies. Skipping Stage 2 is the single most common cause of
+"login works but every subsequent API call returns 401".
 
 ### Cookie layout
 
 | Cookie             | Lifetime                           | Contents                                                                          |
 | ------------------ | ---------------------------------- | --------------------------------------------------------------------------------- |
-| `auth-access`      | Until JWT `exp` (fallback 1h)      | b-button access token                                                             |
-| `auth-refresh`     | 30 days (rotated on every refresh) | b-button refresh token                                                            |
+| `auth-access`      | Until JWT `exp` (fallback 1h)      | d6e instance access token                                                         |
+| `auth-refresh`     | 30 days (rotated on every refresh) | d6e instance refresh token                                                        |
 | `auth-user`        | 30 days                            | base64(JSON({id, email, name})) for the sidebar greeting                          |
 | `auth-oauth-state` | 10 min                             | base64(JSON({state, returnTo})) — only between `/auth/login` and `/auth/callback` |
 
@@ -91,16 +92,18 @@ render — the JWT itself still authenticates each API call.
 
 `loadSession()` (called from `hooks.server.ts` on every server-side
 request) refreshes the access token when its `exp` is within 60
-seconds. Because b-button rotates the refresh token on every successful
-use, two parallel requests that both notice the grace window must not
-both POST `/api/v1/auth/token` independently — only one would succeed
-and the loser's `clearSession()` would clobber the winner's
-`Set-Cookie` headers. The module deduplicates by refresh token value
-so concurrent callers share the same `Promise<OauthTokens>` and emit
-identical cookies in their respective responses.
+seconds. Because the d6e instance rotates the refresh token on every
+successful use, two parallel requests that both notice the grace
+window must not both POST `/api/v1/auth/token` independently — only
+one would succeed and the loser's `clearSession()` would clobber the
+winner's `Set-Cookie` headers. The module deduplicates by refresh
+token value so concurrent callers share the same
+`Promise<OauthTokens>` and emit identical cookies in their respective
+responses.
 
 Refresh **always** targets `${D6E_BASE_URL}/api/v1/auth/token`, never
-d6e-auth, so the rotated access token keeps `iss=b-button`.
+d6e-auth, so the rotated access token keeps its
+d6e-instance-issued audience.
 
 ### Workspace allow-list
 
@@ -152,7 +155,7 @@ D6E_AUTH_URL=https://www.d6e.ai
 D6E_AUTH_CLIENT_ID=<from d6e-auth admin>
 D6E_AUTH_CLIENT_SECRET=<from d6e-auth admin>
 D6E_AUTH_REDIRECT_URI=http://localhost:5173/auth/callback
-D6E_BASE_URL=https://b-button.d6e.ai
+D6E_BASE_URL=https://your-d6e-instance.example.com
 D6E_WORKSPACE_ID=<UUID of the workspace this app is bound to>
 ```
 
@@ -188,7 +191,7 @@ CSRF and bounce the user to a deep link.
 ```ts
 // src/routes/auth/callback/+server.ts
 const authTokens = await exchangeAuthorizationCode(CALLER_TAG, code);
-// Stage 2: re-mint at b-button so the Bearer audience matches.
+// Stage 2: re-mint at the d6e instance so the Bearer audience matches.
 const tokens = await refreshAccessTokenViaBaseUrl(CALLER_TAG, authTokens.refreshToken);
 
 const memberOk = await verifyWorkspaceMembership(CALLER_TAG, tokens.accessToken);
@@ -249,7 +252,7 @@ POST-only by design so an `<img src="...">` cannot force a sign-out.
 | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `buildAuthorizeUrl(caller, state)`                   | Returns `${D6E_AUTH_URL}/auth/login?client_id&redirect_uri&state&response_type=code`.                                                            |
 | `exchangeAuthorizationCode(caller, code)`            | Stage 1 — POSTs `grant_type=authorization_code` to d6e-auth. Returns `OauthTokens` whose `accessToken` is d6e-auth-issued and must be discarded. |
-| `refreshAccessTokenViaBaseUrl(caller, refreshToken)` | Stage 2 / per-session refresh — POSTs `grant_type=refresh_token` to **b-button**. No `client_id` needed.                                         |
+| `refreshAccessTokenViaBaseUrl(caller, refreshToken)` | Stage 2 / per-session refresh — POSTs `grant_type=refresh_token` to the **d6e instance**. No `client_id` needed.                                 |
 | `createOauthState()`                                 | 32 bytes from `crypto.getRandomValues`, base64url-encoded.                                                                                       |
 | `constantTimeEqual(a, b)`                            | Constant-time string compare for the state cookie.                                                                                               |
 | `decodeJwtPayload(token)` / `decodeJwtExpMs(token)`  | Local-only decode (no signature check) so the session layer can pick a refresh moment.                                                           |
@@ -284,14 +287,14 @@ Both endpoints rotate `refresh_token` on every successful call.
 
 ### Session store ([`src/lib/server/session.ts`](../../src/lib/server/session.ts))
 
-| Function                                                                                               | Purpose                                                                                                                                               |
-| ------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `storeSession(event, tokens, user)`                                                                    | Writes `auth-access` (max-age from JWT exp), `auth-refresh` (30d cap), and `auth-user`.                                                               |
-| `clearSession(event)`                                                                                  | Deletes the three cookies above.                                                                                                                      |
-| `loadSession(event)`                                                                                   | Reads cookies; transparently refreshes via b-button when the access token is within 60s of `exp`; returns `null` to signal "redirect to /auth/login". |
-| `readOauthStateCookie(event)` / `writeOauthStateCookie(event, value)` / `clearOauthStateCookie(event)` | Short-lived CSRF cookie helpers.                                                                                                                      |
-| `requireAccessToken(event, caller)`                                                                    | Route-handler narrowing — throws `error(401)` when `event.locals.accessToken` is unset.                                                               |
-| `decodeUserFromAccessToken(token)`                                                                     | Extracts `{ id, email, name }` from `sub`/`email`/`name` claims.                                                                                      |
+| Function                                                                                               | Purpose                                                                                                                                                       |
+| ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `storeSession(event, tokens, user)`                                                                    | Writes `auth-access` (max-age from JWT exp), `auth-refresh` (30d cap), and `auth-user`.                                                                       |
+| `clearSession(event)`                                                                                  | Deletes the three cookies above.                                                                                                                              |
+| `loadSession(event)`                                                                                   | Reads cookies; transparently refreshes via the d6e instance when the access token is within 60s of `exp`; returns `null` to signal "redirect to /auth/login". |
+| `readOauthStateCookie(event)` / `writeOauthStateCookie(event, value)` / `clearOauthStateCookie(event)` | Short-lived CSRF cookie helpers.                                                                                                                              |
+| `requireAccessToken(event, caller)`                                                                    | Route-handler narrowing — throws `error(401)` when `event.locals.accessToken` is unset.                                                                       |
+| `decodeUserFromAccessToken(token)`                                                                     | Extracts `{ id, email, name }` from `sub`/`email`/`name` claims.                                                                                              |
 
 `inflightRefreshes` is a module-level `Map<refreshToken, Promise<OauthTokens>>`
 that deduplicates concurrent refresh attempts; without it the rotating
@@ -318,7 +321,7 @@ member" (route to `/auth/no-access`) from "couldn't ask" (route to
 - [ ] `D6E_AUTH_REDIRECT_URI` is registered **exactly** under the d6e-auth `registered_client.redirectUris` array.
 - [ ] `/auth/callback` performs BOTH `exchangeAuthorizationCode` and `refreshAccessTokenViaBaseUrl`; the Stage 1 access token is never stored.
 - [ ] All four cookies set `httpOnly`, `sameSite: 'lax'`, `secure: !dev`, `path: '/'`.
-- [ ] `loadSession()` refreshes via `${D6E_BASE_URL}/api/v1/auth/token` (b-button), not d6e-auth.
+- [ ] `loadSession()` refreshes via `${D6E_BASE_URL}/api/v1/auth/token` (the d6e instance), not d6e-auth.
 - [ ] `hooks.server.ts` populates `event.locals.accessToken` and `event.locals.user` from `loadSession()` before any route reads them.
 - [ ] `/auth/logout` is POST-only and 303-redirects through `${D6E_AUTH_URL}/auth/logout`.
 - [ ] `/auth/callback` calls `verifyWorkspaceMembership()` and routes 403/404 to `/auth/no-access`.
@@ -348,8 +351,8 @@ member" (route to `/auth/no-access`) from "couldn't ask" (route to
 Stage 2 was skipped. Confirm that `/auth/callback` calls
 `refreshAccessTokenViaBaseUrl()` after `exchangeAuthorizationCode()`,
 and that the cookie value posted as `Bearer` decodes (via
-`decodeJwtPayload()`) to a JWT whose `iss` matches the b-button
-instance — not `iss=d6e-auth`.
+`decodeJwtPayload()`) to a JWT whose `iss` matches the d6e instance's
+audience — not `iss=d6e-auth`.
 
 ### "OAuth state mismatch" on `/auth/callback`
 

@@ -12,9 +12,9 @@
 //     / auth-user cookies (HTTP-only, SameSite=Lax, Secure outside dev).
 //   - clearSession(event): deletes all three cookies.
 //   - loadSession(event): returns the current access token + user when
-//     valid, transparently refreshing against the b-button instance
+//     valid, transparently refreshing against the d6e instance
 //     when the access token is within REFRESH_GRACE_MS of its expiry.
-//     Refresh is intentionally aimed at the b-button token endpoint
+//     Refresh is intentionally aimed at the d6e instance token endpoint
 //     (not d6e-auth) so the resulting access_token has the audience
 //     every ${D6E_BASE_URL} Bearer endpoint expects. Returns null when
 //     there is no session or refresh failed (caller should redirect
@@ -67,7 +67,7 @@ const ACCESS_COOKIE_FALLBACK_MAX_AGE_S = 60 * 60;
 const OAUTH_STATE_COOKIE_MAX_AGE_S = 60 * 10;
 
 // Module-level deduplication of concurrent refresh attempts, keyed by
-// refresh token value. The b-button token endpoint rotates the
+// refresh token value. The d6e instance token endpoint rotates the
 // refresh token on every successful use, so parallel requests
 // carrying the same auth-refresh cookie (e.g. a multi-file upload
 // firing several /api/upload calls while the access token sits in
@@ -83,8 +83,8 @@ const inflightRefreshes = new Map<string, Promise<OauthTokens>>();
 function refreshAccessTokenDeduped(caller: string, refreshToken: string): Promise<OauthTokens> {
 	const existing = inflightRefreshes.get(refreshToken);
 	if (existing) return existing;
-	// Refresh against b-button (not d6e-auth) so the new access
-	// token is signed for the audience that ${D6E_BASE_URL}'s
+	// Refresh against the d6e instance (not d6e-auth) so the new
+	// access token is signed for the audience that ${D6E_BASE_URL}'s
 	// Bearer endpoints verify.
 	const promise = refreshAccessTokenViaBaseUrl(caller, refreshToken).finally(() => {
 		inflightRefreshes.delete(refreshToken);

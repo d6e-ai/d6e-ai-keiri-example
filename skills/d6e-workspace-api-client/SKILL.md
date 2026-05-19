@@ -8,7 +8,7 @@ description: Builds the server-side proxy layer that lets a custom frontend talk
 ## Overview
 
 This skill teaches the server-side glue that sits between a custom
-frontend and a d6e b-button workspace. It covers:
+frontend and a d6e workspace. It covers:
 
 - The strict rule that the browser never talks to d6e directly — every
   request must traverse a same-origin `/api/*` proxy under the app's

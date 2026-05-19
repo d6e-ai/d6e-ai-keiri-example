@@ -32,7 +32,7 @@ overwritten the next time someone re-runs the script.
 
 | Variable                 | Where to find it                                                                                |
 | ------------------------ | ----------------------------------------------------------------------------------------------- |
-| `D6E_BASE_URL`           | Base URL of the d6e instance (e.g. `https://b-button.d6e.ai`)                                   |
+| `D6E_BASE_URL`           | Base URL of the d6e instance (e.g. `https://your-d6e-instance.example.com`)                     |
 | `D6E_WORKSPACE_ID`       | UUID of the target workspace (visible in the d6e frontend URL when you're inside one)           |
 | `D6E_INIT_REFRESH_TOKEN` | Value of the `auth-refresh` cookie for a logged-in workspace-ADMIN session on `D6E_BASE_URL`    |
 
@@ -73,7 +73,7 @@ The cookie is `HttpOnly`, so this manual copy is unavoidable for the
 initial setup. The bootstrap script refreshes the access token by
 posting `{ grant_type: "refresh_token", refresh_token: ... }` to
 `${D6E_BASE_URL}/api/v1/auth/token` (no client credentials needed
-against the b-button instance) and stamps the issued JWT into the
+against the d6e instance) and stamps the issued JWT into the
 `auth-token` cookie when calling `/api/workspace-prompt-rules`.
 
 ## Running the script
@@ -85,8 +85,8 @@ npm run init
 Successful output:
 
 ```
-[init-workspace] refreshing access token via https://b-button.d6e.ai/api/v1/auth/token
-[init-workspace] POST https://b-button.d6e.ai/api/workspace-prompt-rules (workspaceId=<uuid>)
+[init-workspace] refreshing access token via https://your-d6e-instance.example.com/api/v1/auth/token
+[init-workspace] POST https://your-d6e-instance.example.com/api/workspace-prompt-rules (workspaceId=<uuid>)
 [init-workspace] prompt size: 2853 characters
 [init-workspace] OK - rule id=<uuid> sort_order=0
 [init-workspace] Verify in the d6e frontend: Settings > Workspace > Prompt rules.
