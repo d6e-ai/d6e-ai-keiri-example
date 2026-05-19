@@ -211,13 +211,9 @@ npx skills add https://github.com/d6e-ai/d6e-ai-keiri-example --skill d6e-worksp
 npx skills add https://github.com/d6e-ai/d6e-ai-keiri-example --skill d6e-prompt-driven-ui
 ```
 
-These skills are auto-discovered by [skills.sh](https://skills.sh) as
-long as the repository is **public** and contains `skills/<name>/SKILL.md`
-files. Once published they appear at
-`https://skills.sh/d6e-ai/d6e-ai-keiri-example/<skill-name>`.
-Repository maintainers: keep the repository visibility set to public
-(_Settings → General → Danger Zone → Change visibility_) so the
-listings stay live.
+These skills are auto-discovered by [skills.sh](https://skills.sh)
+from the `skills/<name>/SKILL.md` files in this repository and appear
+at `https://skills.sh/d6e-ai/d6e-ai-keiri-example/<skill-name>`.
 
 ## Status & caveats
 
