@@ -28,9 +28,10 @@ sequenceDiagram
     Auth-->>App: redirect ?code=...&state=...
     App->>Auth: POST /api/v1/auth/token (authorization_code)
     Auth-->>App: access_token (iss=d6e-auth) + refresh_token
-    Note over App,Files: stage 2 — re-mint at the d6e instance so the access_token<br/>has the audience the d6e instance API expects
+    Note over App,Files: stage 2 — re-mint at the d6e instance so the access_token has the audience the d6e instance API expects
     App->>Files: POST /api/v1/auth/token (refresh_token)
-    Files-->>App: access_token (iss=&lt;d6e-instance&gt;) + refresh_token<br/>(written to HTTP-only cookies)
+    Files-->>App: access_token (d6e-instance audience) + refresh_token
+    Note over App,Files: tokens written to HTTP-only cookies
     App->>Files: GET /api/v1/workspaces/{wsId} (membership check)
     Files-->>App: 200 OK (or 403 -> /auth/no-access)
 
