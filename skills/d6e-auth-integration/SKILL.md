@@ -63,7 +63,7 @@ sequenceDiagram
     Auth-->>App: { access_token (iss=d6e-auth), refresh_token }
     Note over App,Token: Stage 2 — Bearer audience fix
     App->>Token: POST /api/v1/auth/token (refresh_token)
-    Token-->>App: { access_token (iss=&lt;d6e-instance&gt;), refresh_token }
+    Token-->>App: { access_token (d6e-instance audience), refresh_token }
     App->>Api: GET /api/v1/workspaces/{id} (Bearer)
     Api-->>App: 200 OK (member) or 403/404 (reject)
     App-->>Browser: Set-Cookie auth-access/refresh/user, 302 to /

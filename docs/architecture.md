@@ -31,7 +31,7 @@ sequenceDiagram
     Auth-->>App: { access_token (iss=d6e-auth), refresh_token }
     Note over App,Token: stage 2 — d6e-auth's access_token is rejected by<br/>the d6e instance API (aud mismatch), so re-mint at the d6e instance
     App->>Token: POST /api/v1/auth/token (refresh_token)
-    Token-->>App: { access_token (iss=&lt;d6e-instance&gt;), refresh_token }
+    Token-->>App: { access_token (d6e-instance audience), refresh_token }
     App->>Files: GET /api/v1/workspaces/{D6E_WORKSPACE_ID}<br/>(membership probe, Bearer d6e-instance token)
     Files-->>App: 200 OK (or 403 -> /auth/no-access)
     App-->>User: Set-Cookie auth-access / auth-refresh; 302 /
