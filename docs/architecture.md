@@ -34,7 +34,7 @@ sequenceDiagram
     Token-->>App: { access_token (d6e-instance audience), refresh_token }
     App->>Files: GET /api/v1/workspaces/{D6E_WORKSPACE_ID}<br/>(membership probe, Bearer d6e-instance token)
     Files-->>App: 200 OK (or 403 -> /auth/no-access)
-    App-->>User: Set-Cookie auth-access / auth-refresh; 302 /
+    App-->>User: Set-Cookie auth-access / auth-refresh, 302 to /
 
     Note over User,LLM: Journal creation
     User->>App: Pick N receipt images
