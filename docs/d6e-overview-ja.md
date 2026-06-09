@@ -29,8 +29,10 @@ d6e(Dialogue)は、自然言語でデータ操作・分析・ワークフロー�
 ```mermaid
 flowchart LR
     EndUser[End User Browser]
-    Auth[d6e-auth<br/>OAuth2 IdP and JWKS]
+    Auth[d6e-auth<br/>OAuth2 IdP and JWKS<br/>Scheduled Workflow Orchestrator<br/>SNS Bridge for Slack, Discord, LINE]
     Gateway[Vercel AI Gateway<br/>LLM and Embedding]
+    VercelCron[Vercel Cron<br/>every 5 min]
+    SNS[Slack / Discord / LINE]
 
     subgraph instance [d6e instance hosts]
         Proxy[Reverse Proxy<br/>D6E_BASE_URL]
@@ -47,6 +49,11 @@ flowchart LR
     EndUser -- "OAuth2 login" --> Auth
     Auth -. "JWKS verify" .-> Proxy
     CustomFE -- "Bearer / cookie" --> Proxy
+
+    VercelCron -- "tick" --> Auth
+    SNS -- "slash command / webhook" --> Auth
+    Auth -- "execute-by-intent<br/>signed JWT" --> Proxy
+    Auth -- "post result" --> SNS
 
     Proxy --> Frontend
     Proxy --> ApiServer
@@ -67,7 +74,12 @@ flowchart LR
 - **PostgreSQL + pgvector**:ワークスペースごとに `ws_{workspace_id}_<table>` プレフィックス命名で論理分離。
 - **Docker socket**:STF を Docker ランタイムで実行する際に、API サーバから `/var/run/docker.sock` を read-only でマウントして利用([`compose.withdb.yml`](https://github.com/d6e-ai/d6e/blob/main/compose.withdb.yml))。
 - **Vercel AI Gateway**:すべての LLM 呼び出しと埋め込みを集約。インスタンスは個別プロバイダキーを保持しない([d6e/.env.example](https://github.com/d6e-ai/d6e/blob/main/.env.example))。
-- **d6e-auth**:OAuth2 IdP。エンドユーザーの認証と JWT 発行を担当([d6e-auth リポジトリ](https://github.com/d6e-ai/d6e-auth))。
+- **d6e-auth**:複数の役割を兼ねる中心的なコンポーネント([d6e-auth リポジトリ](https://github.com/d6e-ai/d6e-auth))。
+  - **OAuth2 IdP / JWKS**:エンドユーザーの認証と JWT 発行(§ 3 で詳述)。
+  - **Scheduled Workflow Orchestrator**:Vercel Cron(5 分間隔)で `scheduled_workflow` テーブルを polling し、到来したスケジュールについて d6e-auth が JWT を sign して d6e インスタンスの `execute-by-intent` を Bearer 認証で呼び出す([`scheduled-workflow.ts`](https://github.com/d6e-ai/d6e-auth/blob/main/src/lib/server/scheduled-workflow.ts)、[`vercel.json`](https://github.com/d6e-ai/d6e-auth/blob/main/vercel.json))。
+  - **SNS Bridge**:Slack slash command(`/d6e setup`、`/d6e schedule add/list/delete/pause/resume` 等、[`api/v1/slack/commands`](https://github.com/d6e-ai/d6e-auth/blob/main/src/routes/api/v1/slack/commands/+server.ts))、Discord interactions、LINE webhook から `execute-by-intent` を起動し、開始通知 → スレッド返信での結果通知(ファイル添付対応)まで自動で行う。
+- **Vercel Cron**:`d6e-auth/vercel.json` で 5 分間隔のスケジュールが定義されており、スケジュール実行・月次付与・期間ロールオーバー等の定期処理を駆動する。
+- **Slack / Discord / LINE**:エンドユーザーが自然言語で d6e ワークフローを叩く UI として、または cron 実行結果の配信先として機能する。
 
 ## 3. 接続方式(既存インスタンスへ `.env` 接続)
 
@@ -376,47 +388,63 @@ UX)で、新規のハーネスを立てる話ではありません。
 
 ### 7.4 Layer X 風モデル(イベントフック → バックグラウンド agent → 成果物配置)
 
-**本質的なゴール:** 自然言語ではなく、**イベント**(メール受信 / ファイル到着 / cron 等)
-をトリガに、エージェントが**バックグラウンドで**長時間動き、成果物をどこかに置く、という
-業務ワークフロー全体を回したい。
+**本質的なゴール:** 自然言語チャットだけでなく、**イベント**(cron / Slack コマンド /
+Discord interaction / LINE webhook / ファイル到着 等)をトリガに、エージェントが
+バックグラウンドで動き、成果物を起点元(SNS チャネル等)に返す、という業務ワークフロー
+全体を回したい。
 
-**d6e の対応:** 半分はすでにあり、半分は本当に欠けています。整理は以下のとおり。
+**d6e の対応:** **大半が d6e + d6e-auth で既に実装済み**です。トリガ(cron・SNS slash
+command・SNS webhook)・実行・結果配信までの一連のループは、**d6e-auth が
+オーケストレータとして担当**しています(§ 2 の全体図参照)。
 
-| Layer X 風モデルの要素                                            | d6e 側の対応                                                                  |
-| ----------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| エージェント本体                                                  | **STF**(JS / Docker)が担当(既存)                                              |
-| 複数エージェントの合成                                            | **Workflow** + **Effect** が担当(既存)                                        |
-| 自然言語起点での起動                                              | **`execute-by-intent`**(既存)                                                 |
-| 成果物の保存先                                                    | Workspace 内 SQL テーブル / File Storage / `audit_log`(既存)                  |
-| **イベント起動**(cron / webhook / file-arrival / DB row inserted) | **未実装**                                                                    |
-| **バックグラウンド長時間実行**(数十秒〜数分以上)                  | **未実装**(現状の `execute-by-intent` は HTTP 1 リクエストで完結する同期実行) |
+| Layer X 風モデルの要素                     | d6e + d6e-auth 側の対応                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| エージェント本体                           | **STF**(JS / Docker)— 既存                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| 複数エージェントの合成                     | **Workflow** + **Effect** — 既存                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| 自然言語起点での起動                       | `execute-by-intent` — 既存                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| 成果物の保存先(d6e 内)                     | Workspace 内 SQL テーブル / File Storage / `audit_log` — 既存                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| **Cron / スケジュール起動**                | **既存**:d6e-auth の `scheduled_workflow` テーブル(`cron_expression`、`timezone`、`next_run_at` を保持、[schema.ts](https://github.com/d6e-ai/d6e-auth/blob/main/src/lib/server/db/schema.ts))を、Vercel Cron が `vercel.json` の `*/5 * * * *` で polling し、到来した schedule について d6e-auth が JWT を sign して `${baseUrl}/api/workflows/execute-by-intent` を呼び出す([scheduled-workflow.ts](https://github.com/d6e-ai/d6e-auth/blob/main/src/lib/server/scheduled-workflow.ts))。 |
+| **Slack 起動**(slash command / メンション) | **既存**:`/d6e setup <client-id>` で Slack workspace を d6e instance に紐付け、`/d6e schedule add daily 09:00 <intent>` のような自然言語でスケジュール作成・一覧・一時停止が可能([api/v1/slack/commands](https://github.com/d6e-ai/d6e-auth/blob/main/src/routes/api/v1/slack/commands/+server.ts))。チャネルメンションでの即時実行もある。                                                                                                                                                  |
+| **Discord 起動**(interaction)              | **既存**:[api/v1/discord/interactions](https://github.com/d6e-ai/d6e-auth/blob/main/src/routes/api/v1/discord/interactions/+server.ts) と `register-discord-commands.js` で Slack 同等のコマンドセットを提供。                                                                                                                                                                                                                                                                               |
+| **LINE 起動**(webhook)                     | **既存**:[api/v1/line/webhook](https://github.com/d6e-ai/d6e-auth/blob/main/src/routes/api/v1/line/webhook/+server.ts) で受信、ファイル添付は `line_pending_file` テーブルに一時保管した上で d6e の File Storage に転送。                                                                                                                                                                                                                                                                    |
+| **成果物の SNS 配信**                      | **既存**:`notifyStart` で開始通知 → 実行 → `notifyResult` でスレッド / 返信形式の結果通知。生成ファイル(`result.files[]`)は Buffer 化して `uploadFile` / `uploadChannelFile` で Slack / Discord に添付。                                                                                                                                                                                                                                                                                     |
+| **管理 UI**                                | **既存**:d6e-auth `/account/schedules` でスケジュールの一覧・編集・手動 "Run Now" が可能。                                                                                                                                                                                                                                                                                                                                                                                                   |
+| **ファイル到着 / DB 行挿入トリガ**         | **未実装**(`line_pending_file` は LINE 経由のファイルを一時保管する専用機能で、汎用トリガではない)。                                                                                                                                                                                                                                                                                                                                                                                         |
+| **Vercel 60s を超える長時間ジョブ**        | **未対応**:`execute-by-intent` は HTTP 1 リクエストで完結する同期実行で、d6e-auth を経由する以上 Vercel Pro の関数タイムアウト 60s が上限。STF Docker を直接叩けば回避できるが、`execute-by-intent` 経由では現状不可。                                                                                                                                                                                                                                                                       |
 
-つまり Layer X 風モデルの**前半 4 要素は d6e で既にできていて**、本当に欠けているのは
-**後半 2 つ(イベントトリガとバックグラウンド長時間実行)**だけ、というのが正確な現状です。
+つまり Layer X 風モデルのうち、**「cron 起動」「SNS 起動」「結果の SNS 配信」**まで含めて
+**すでに本番稼働中**です。具体的なシナリオで言えば「Slack で
+`/d6e schedule add daily 09:00 領収書を仕訳に変換` と打って毎朝 9 時に集計を仕込み、
+完了したら同じスレッドに JSON とファイルが返ってくる」というところまで、外部に別の
+ハーネスを立てずに動きます。
 
-**本当に追加すべきもの:**
+**本当に欠けているのは:** 上の表で「未実装」となっている 2 点だけです。
 
-- **Workflow Trigger**(仮称、`/api/v1/workflow-triggers`):cron 式 / Webhook 受信 /
-  File-arrival / DB row inserted 等のイベントから Workflow を起動する仕組み。
-- **長時間ジョブ実行モデル**:現状 HTTP 同期の `execute-by-intent` を、`enqueue → poll`
-  または `enqueue → /ws (WebSocket) で push` に分離する。`/ws`(`/packages/api/src/routes/ws.rs`)は
-  すでに Workspace スコープの broadcast チャネルを持っており、進捗 push 用に流用できる可能性が
-  あります。
+- **汎用ファイル到着 / DB 行挿入トリガ**:File Storage への新規 upload や任意の SQL テーブルへの
+  INSERT を契機に Workflow を起動する。必要なら d6e instance 側に `workflow_trigger` テーブルを
+  足す形での拡張で、**d6e-auth の `scheduled_workflow` モデルがそのまま参考にできます**。
+- **Vercel 60s を超える長時間ジョブ**:現状の `execute-by-intent` は同期 HTTP で完結するため、
+  d6e-auth(Vercel)経由の呼び出しは 60s で打ち切られます。長時間処理を回すには
+  `enqueue → poll` または `enqueue → /ws (WebSocket) push` のような非同期実行モデルが必要です。
+  `/ws`([d6e/packages/api/src/routes/ws.rs](https://github.com/d6e-ai/d6e/blob/main/packages/api/src/routes/ws.rs))
+  は既に Workspace スコープの broadcast チャネルを持っているので、進捗 push 用に流用できる
+  可能性があります。
 
-これらは **d6e 本体に追加する機能**として整理されるべきもので、外側に別のハーネス
+このどちらも **d6e 本体への小さな拡張**として整理されるべきもので、外側に別のハーネス
 (`skill2api` / `deploy-harness`)を立てる話ではありません。
 
 ### 7.5 まとめ
 
-| 要望                                                     | d6e 既存機能でのカバー                                                                                                  | 真に欠けているもの                                                                  |
-| -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `skill2api`(SKILL.md → サーバ実行)                       | STF + Workflow + Workspace Prompt Rule + `execute-by-intent` でほぼ達成済                                               | `SKILL.md` から STF / Workflow / Prompt Rule を生成する**変換 CLI**                 |
-| `deploy-harness`(workspace ごとに API server をデプロイ) | STF Docker runtime + `POST /api/v1/stfs` + CI スクリプトで達成済。"workspace ごとに別サーバ" はマルチテナント設計と矛盾 | **STF dev loop の DX**(`d6e-stf push` 的な CLI)                                     |
-| ローカルテスト環境ツール                                 | `compose.withdb.yml` で完結                                                                                             | (上と同じ)**STF dev loop の DX**                                                    |
-| Layer X 風モデル                                         | STF / Workflow / Effect / `execute-by-intent` で前半は達成済                                                            | **Workflow Trigger**(cron / webhook / file-arrival)と**長時間バックグラウンド実行** |
+| 要望                                                     | d6e + d6e-auth 既存機能でのカバー                                                                                                        | 真に欠けているもの                                                                                                                                                        |
+| -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `skill2api`(SKILL.md → サーバ実行)                       | STF + Workflow + Workspace Prompt Rule + `execute-by-intent` でほぼ達成済                                                                | `SKILL.md` から STF / Workflow / Prompt Rule を生成する**変換 CLI**                                                                                                       |
+| `deploy-harness`(workspace ごとに API server をデプロイ) | STF Docker runtime + `POST /api/v1/stfs` + CI スクリプトで達成済。"workspace ごとに別サーバ" はマルチテナント設計と矛盾                  | **STF dev loop の DX**(`d6e-stf push` 的な CLI)                                                                                                                           |
+| ローカルテスト環境ツール                                 | `compose.withdb.yml` で完結                                                                                                              | (上と同じ)**STF dev loop の DX**                                                                                                                                          |
+| Layer X 風モデル(イベントフック → bg agent → 成果物配信) | **d6e-auth `scheduled_workflow` + Vercel Cron + Slack/Discord/LINE bridge** で「cron 起動」「SNS 起動」「結果の SNS 配信」まで本番稼働中 | **汎用ファイル到着 / DB 行挿入トリガ**(d6e instance 側に `workflow_trigger` を足す小拡張)と、**Vercel 60s を超える長時間ジョブ実行モデル**(`enqueue → /ws push` への分割) |
 
 要望を「新しい外部ハーネスを作る」方向で解釈すると d6e のテナント分離・実行モデルと
-ぶつかるので、**「既存の STF / Workflow / Workspace Prompt Rule を活かす方向に寄せ、
-本当に欠けている `Workflow Trigger` と `STF dev loop CLI` の 2 点だけを足す**」というのが
-現状の整理です。詳細な設計議論が必要になった場合は、別途 `.plans/*.plan.md` を起こして
+ぶつかります。実際には **d6e + d6e-auth で要望の大部分は既に動いており**(特に Layer X 風の
+イベント駆動シナリオは Slack/Discord/LINE と cron で既に本番運用可能)、**残るのは 2 点だけ**:
+**(1) 汎用ファイル到着 / DB 行挿入トリガ**、**(2) Vercel 60s を超える長時間ジョブ実行モデル**。
+詳細な設計議論が必要になった場合は、本ドキュメントとは別途 `.plans/*.plan.md` を起こして
 進める想定です。
