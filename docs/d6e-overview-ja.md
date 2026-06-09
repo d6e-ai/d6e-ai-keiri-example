@@ -257,25 +257,166 @@ docker compose -f compose.withdb.yml up -d
 再利用可能な Agent Skills も `skills/` 配下に同梱しています
 (`d6e-auth-integration`、`d6e-workspace-api-client`、`d6e-prompt-driven-ui`)。
 
-## 7. 追加要望メモ(現状は未対応、議論用)
+## 7. 追加要望と d6e の対応関係
 
-以下は外部開発者から寄せられた要望で、**現状の d6e にはまだ無い**機能です。設計議論の
-たたき台としてここに残します。
+外部開発者から「`skill2api`」「`deploy-harness`」「ローカルテスト環境ツール」「Layer X 風の
+イベントフック起動エージェント」という要望が出ています。**結論として、要望の大部分は
+d6e に既存の仕組みでカバーできており、本当に欠けているのは限定的**です。誤解を避けるため、
+各要望の**本質的なゴール**と、d6e の既存機能(STF / Workflow / Effect / Workspace Prompt
+Rule / `execute-by-intent`)との対応を明示します。
 
-- **`skill2api`**:`.claude/skills/*` や `.codex/skills/*` 配下の `SKILL.md` を読み込み、
-  `${D6E_BASE_URL}/{workspace}/api/v1/<skill-name>` のような POST エンドポイントとして
-  サーバ上で実行できる OpenAPI を吐き出すツール。SKILL の `description` と
-  `$ARGUMENTS` 規約をそのまま OpenAPI の summary / request body に対応付けるイメージ。
-- **`deploy-harness`**:`npx d6e-deploy workspace=xxxx` で、上記 `skill2api` で生成した
-  agent API server を指定ワークスペースの環境にデプロイする CLI。CI で
-  `main` マージ後に自動更新する用途を想定。現状の
-  [d6e-deploy](https://github.com/d6e-ai/d6e-deploy) は既存インスタンスを SSH 経由で
-  `git pull && docker compose up -d` するだけのオペレーション用スクリプトで、別物。
-- **ローカルテスト用ツール**:DB / ストレージを含めた agent server 開発ライフサイクル支援
-  (`d6e-agent-server` のローカル動作環境)。
-- **アーキテクチャ参考**:[Layer X の Agent サービス(getaiworkforce.com)](https://getaiworkforce.com/)が
-  採用している「イベントフックでエージェントが起動 → バックグラウンド実行 → 成果物をどこかへ置く」
-  というモデル。通常の API サーバと**同時並行で開発**できる体験を目指す。
+### 7.0 前提:d6e がすでに提供している実行モデル
 
-これらが必要になった場合は本ドキュメントとは別途、設計プラン(`.plans/*.plan.md`)を
-起こして議論する想定です。
+| 抽象                            | d6e 上の実体                                                                   | 役割                                                                                                                                                                                                        |
+| ------------------------------- | ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 決定論的なサーバ側ロジック 1 つ | **STF**(`/api/v1/stfs`)                                                        | JavaScript(QuickJS)または Docker コンテナでユーザー定義コードを実行。バージョン管理つき([d6e/packages/api/src/routes/v1/stf.rs](https://github.com/d6e-ai/d6e/blob/main/packages/api/src/routes/v1/stf.rs)) |
+| 複数 STF の合成                 | **Workflow**(`/api/v1/workflows`)                                              | STF と Effect(HTTP プリセット)を順次実行                                                                                                                                                                    |
+| 外部 HTTP の呼び出し            | **Effect**(`/api/v1/effects`)                                                  | URL / ヘッダ / ボディマッピングを保存して、STF・Workflow から再利用                                                                                                                                         |
+| 自然言語起点での起動            | **`execute-by-intent`** + **Workspace Prompt Rule**                            | "intent" を Workflow にルーティングし、LLM に決まった JSON 契約で結果を返させる([`docs/llm-output-contract.md`](llm-output-contract.md))                                                                    |
+| マルチテナント境界              | **Workspace**(`/api/v1/workspaces`)                                            | テーブル名プレフィックス `ws_{workspace_id}_` と Policy で論理分離                                                                                                                                          |
+| Workspace 固有のコンテナ実行    | **STF Docker runtime**                                                         | API サーバが `/var/run/docker.sock` を read-only でマウントし、オンデマンドで起動                                                                                                                           |
+| ワークスペース内データ保管      | **PostgreSQL(pgvector)** + **File Storage**(`/api/v1/workspaces/{id}/files/*`) | SQL テーブル / ファイルともワークスペース分離                                                                                                                                                               |
+
+「Skill」「agent」「ハーネス」と呼びたくなるものは、d6e ではこれらの組み合わせで表現されます。
+
+### 7.1 `skill2api`:`SKILL.md` を OpenAPI 化してサーバで叩く構想
+
+**本質的なゴール:** 自然言語で書かれた一連の処理(`.claude/skills/*/SKILL.md` 等)を、
+サーバ上で実行可能な単位として呼び分けたい。
+
+**d6e の対応:** 上の表の通り、STF / Workflow / Effect / Workspace Prompt Rule /
+`execute-by-intent` の **5 点セットで機能的にはほぼ満たされています**。マッピングは下表の
+とおりです。
+
+| `SKILL.md` 側の要素                            | d6e 上の対応物                                                |
+| ---------------------------------------------- | ------------------------------------------------------------- |
+| 自然言語で書かれた "ふるまい"                  | **Workspace Prompt Rule**(`POST /api/workspace-prompt-rules`) |
+| 引数 `$ARGUMENTS` の解釈                       | `execute-by-intent` の `message` と `inputFileRefs[]`         |
+| 決定論的なロジック(DB に書く・外部 API を呼ぶ) | **STF**(JS / Docker)                                          |
+| 複数の skill / step の連鎖                     | **Workflow** + **Effect**                                     |
+| エンドポイント                                 | **`POST /api/workflows/execute-by-intent`**(1 本)             |
+
+つまり「ワークスペースごとに、自然言語で呼び出せる skill が n 個ある」という世界は、
+**`execute-by-intent` 1 本 + Workspace Prompt Rule の中で intent ごとに分岐**として
+すでに動いています。本リポジトリ `d6e-ai-keiri-example` も、`領収書を仕訳に変換してください`
+という intent を 1 つの Workflow にルーティングする最小例です。
+
+**設計上の注意(なぜ「SKILL.md → OpenAPI 化」がそのまま入れにくいか):**
+
+- `SKILL.md` は本来 **Claude Code / Cursor 等の LLM クライアントが自律的に発見・ルーティング**
+  するためのフォーマットです。サーバ API として `/{workspace}/api/v1/<skill-name>` に
+  固定化すると、自然言語からの skill 選択をサーバが担うことになり、結局
+  **`execute-by-intent` をリブランディングしたものになります**。
+- URL 設計 `/{workspace}/api/v1/<skill-name>` は、d6e の現行ルーティング
+  (`/api/v1/<resource>` + `X-Workspace-ID` ヘッダ、ファイルだけ例外的に
+  `/api/v1/workspaces/{id}/files/...`)と合いません。1 ワークスペース 1 オリジンという
+  Vercel project 的な発想は、d6e の単一インスタンス・マルチテナントモデルとは前提が違います。
+- `.claude/skills/*/SKILL.md` をサーバで実行するということは、結局 LLM をサーバサイドで
+  呼ぶことになり、それは **Vercel AI Gateway 経由の `execute-by-intent` がすでに担当**しています
+  ([d6e/.env.example](https://github.com/d6e-ai/d6e/blob/main/.env.example))。
+
+**本当に追加価値が出るとしたら:** 「**`SKILL.md` 1 ファイル → 対応する STF / Workflow /
+Workspace Prompt Rule を生成する変換 CLI**」だけ、というのが現在の整理です。これは d6e の
+本流アーキテクチャと整合します(出力先が既存の API リソース)。
+
+### 7.2 `deploy-harness`:`npx d6e-deploy workspace=xxxx` で agent api server をデプロイ
+
+**本質的なゴール:** 自分のリポジトリで書いた agent ロジックを、CI で `main` マージ後に
+自動でワークスペース環境に反映したい。
+
+**d6e の対応:** こちらも **STF + Workflow + Workspace Prompt Rule への PUT / POST 1 本**で
+ほぼ達成可能です。
+
+- ロジックは **STF**(`POST /api/v1/stfs` または `PATCH /api/v1/stfs/{id}`)に書き込めば、
+  **Workspace 固有の Docker コンテナとして即座に実行可能**になります。Docker socket を
+  API サーバが持っているので、専用の deploy 基盤は不要です([d6e/compose.withdb.yml](https://github.com/d6e-ai/d6e/blob/main/compose.withdb.yml) の
+  `volumes: /var/run/docker.sock:/var/run/docker.sock:ro`)。
+- 連鎖は **Workflow** に書き、自然言語ルーティングは **Workspace Prompt Rule** に書きます。
+- CI から自動更新する場合は、本リポジトリの
+  [`scripts/init-workspace.mjs`](../scripts/init-workspace.mjs) と同じパターン
+  (admin の refresh token を `${D6E_BASE_URL}/api/v1/auth/token` で交換 → 各リソースに
+  POST / PATCH)で十分です。GitHub Actions から curl 数本で完結します。
+
+**設計上の注意(なぜ「workspace ごとに別 API サーバをデプロイ」が d6e と矛盾するか):**
+
+- d6e の **「Workspace」は 1 つの d6e インスタンス上の論理マルチテナント境界**であって、
+  デプロイの実体ではありません([d6e/README.md](https://github.com/d6e-ai/d6e/blob/main/README.md))。
+  ワークスペースごとに別の API サーバを立てるという単位はそもそも存在しません。
+- Workspace 固有のコンテナ実行は **STF Docker runtime が既に担当**しています。
+  ワークスペースをまたいだ実行はテーブルプレフィックス `ws_{workspace_id}_` と Policy で
+  防がれており、`audit_log` も 1 つに集約されます。**ここに「workspace ごとに別サーバ」を
+  足すと、課金集計・監査ログ・テナント分離の前提がすべて崩れます**。
+- 既存の [d6e-deploy](https://github.com/d6e-ai/d6e-deploy) は SSH 経由で**インスタンス全体**を
+  更新するオペレーション用スクリプトで、ワークスペース粒度のデプロイとは別レイヤーの話です。
+- Layer X / [getaiworkforce.com](https://getaiworkforce.com/) のような「agent 単位・組織単位の
+  個別デプロイ」モデルは、シングルテナント(または agent ごとに container を立てる)前提です。
+  d6e はそれよりも 1 段上のレイヤー(=複数 agent / workspace が 1 インスタンス上に共存する
+  プラットフォーム)を設計しているので、同じモデルは直接持ち込めません。
+
+**本当に追加価値が出るとしたら:** 「**STF dev loop の DX**」、つまり「ローカルで STF コードを
+編集 → 自動 push → 即動作確認 → CI で `main` マージ後に自動 push」を 1 本の CLI
+(`d6e-stf push` 等)にまとめることです。これは d6e の本流に乗ったまま、CI 自動更新の
+ユーザビリティだけを上げる方向です。
+
+### 7.3 ローカルテスト環境ツール(DB / ストレージ含む)
+
+**本質的なゴール:** DB やストレージを含めて、agent 開発ライフサイクルをローカルで回したい。
+
+**d6e の対応:** これは **`compose.withdb.yml` で既に完結**しています。
+
+- Postgres(`pgvector/pgvector:0.8.2-pg18`)+ API + MCP + Frontend を 1 コマンドで起動
+  ([d6e/compose.withdb.yml](https://github.com/d6e-ai/d6e/blob/main/compose.withdb.yml))。
+- File Storage は d6e の `/api/v1/workspaces/{id}/files/*` 経由で **DB に永続化**されます。
+  S3 / GCS のような外部オブジェクトストレージは不要です。
+- d6e-auth(`D6E_AUTH_CLIENT_*`)の払い出しさえあれば、**本番と同じ OAuth2 二段階交換**で
+  ローカル検証できます(§ 3.1 のシーケンスはローカルでもそのまま成立)。
+
+**本当に欠けているのは:** ここでも「**STF dev loop**」(ホットリロード、ローカル LLM 切替の
+UX)で、新規のハーネスを立てる話ではありません。
+
+### 7.4 Layer X 風モデル(イベントフック → バックグラウンド agent → 成果物配置)
+
+**本質的なゴール:** 自然言語ではなく、**イベント**(メール受信 / ファイル到着 / cron 等)
+をトリガに、エージェントが**バックグラウンドで**長時間動き、成果物をどこかに置く、という
+業務ワークフロー全体を回したい。
+
+**d6e の対応:** 半分はすでにあり、半分は本当に欠けています。整理は以下のとおり。
+
+| Layer X 風モデルの要素                                            | d6e 側の対応                                                                  |
+| ----------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| エージェント本体                                                  | **STF**(JS / Docker)が担当(既存)                                              |
+| 複数エージェントの合成                                            | **Workflow** + **Effect** が担当(既存)                                        |
+| 自然言語起点での起動                                              | **`execute-by-intent`**(既存)                                                 |
+| 成果物の保存先                                                    | Workspace 内 SQL テーブル / File Storage / `audit_log`(既存)                  |
+| **イベント起動**(cron / webhook / file-arrival / DB row inserted) | **未実装**                                                                    |
+| **バックグラウンド長時間実行**(数十秒〜数分以上)                  | **未実装**(現状の `execute-by-intent` は HTTP 1 リクエストで完結する同期実行) |
+
+つまり Layer X 風モデルの**前半 4 要素は d6e で既にできていて**、本当に欠けているのは
+**後半 2 つ(イベントトリガとバックグラウンド長時間実行)**だけ、というのが正確な現状です。
+
+**本当に追加すべきもの:**
+
+- **Workflow Trigger**(仮称、`/api/v1/workflow-triggers`):cron 式 / Webhook 受信 /
+  File-arrival / DB row inserted 等のイベントから Workflow を起動する仕組み。
+- **長時間ジョブ実行モデル**:現状 HTTP 同期の `execute-by-intent` を、`enqueue → poll`
+  または `enqueue → /ws (WebSocket) で push` に分離する。`/ws`(`/packages/api/src/routes/ws.rs`)は
+  すでに Workspace スコープの broadcast チャネルを持っており、進捗 push 用に流用できる可能性が
+  あります。
+
+これらは **d6e 本体に追加する機能**として整理されるべきもので、外側に別のハーネス
+(`skill2api` / `deploy-harness`)を立てる話ではありません。
+
+### 7.5 まとめ
+
+| 要望                                                     | d6e 既存機能でのカバー                                                                                                  | 真に欠けているもの                                                                  |
+| -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `skill2api`(SKILL.md → サーバ実行)                       | STF + Workflow + Workspace Prompt Rule + `execute-by-intent` でほぼ達成済                                               | `SKILL.md` から STF / Workflow / Prompt Rule を生成する**変換 CLI**                 |
+| `deploy-harness`(workspace ごとに API server をデプロイ) | STF Docker runtime + `POST /api/v1/stfs` + CI スクリプトで達成済。"workspace ごとに別サーバ" はマルチテナント設計と矛盾 | **STF dev loop の DX**(`d6e-stf push` 的な CLI)                                     |
+| ローカルテスト環境ツール                                 | `compose.withdb.yml` で完結                                                                                             | (上と同じ)**STF dev loop の DX**                                                    |
+| Layer X 風モデル                                         | STF / Workflow / Effect / `execute-by-intent` で前半は達成済                                                            | **Workflow Trigger**(cron / webhook / file-arrival)と**長時間バックグラウンド実行** |
+
+要望を「新しい外部ハーネスを作る」方向で解釈すると d6e のテナント分離・実行モデルと
+ぶつかるので、**「既存の STF / Workflow / Workspace Prompt Rule を活かす方向に寄せ、
+本当に欠けている `Workflow Trigger` と `STF dev loop CLI` の 2 点だけを足す**」というのが
+現状の整理です。詳細な設計議論が必要になった場合は、別途 `.plans/*.plan.md` を起こして
+進める想定です。
