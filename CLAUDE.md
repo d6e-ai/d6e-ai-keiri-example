@@ -168,14 +168,16 @@ building their own d6e-connected frontends:
 Conventions when editing them:
 
 - Each `SKILL.md` has a YAML frontmatter (`name` + `description`) in
-  English. The `description` must include trigger phrases so
-  [skills.sh](https://skills.sh) and Cursor's `@skills` picker can
-  surface the skill from natural-language requests.
+  English. The `description` must include trigger phrases so the
+  [skills CLI](https://skills.sh) search and Cursor's `@skills` picker
+  can surface the skill from natural-language requests.
 - Skill bodies are English-first with Japanese trigger examples in
   the `When to Use` list.
 - Skills cite the implementation by relative path
   (e.g. `[\`src/lib/server/d6e-client.ts\`](../../src/lib/server/d6e-client.ts)`).
   When you change a referenced module, update the citing skill in
   the same PR.
-- `skills.sh` auto-discovers `skills/<name>/SKILL.md` files in this
-  repository and surfaces them as listings.
+- Skills are installed straight from this repository's GitLab URL:
+  `npx skills add https://gitlab.com/d6e-ai/d6e-ai-keiri-example --skill <name>`.
+  The repository moved to GitLab, so the GitHub `owner/repo`
+  shorthand no longer works — always document the full URL.

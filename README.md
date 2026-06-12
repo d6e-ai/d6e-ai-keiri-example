@@ -207,14 +207,16 @@ this codebase as a reference:
 Install in your agent:
 
 ```bash
-npx skills add https://github.com/d6e-ai/d6e-ai-keiri-example --skill d6e-auth-integration
-npx skills add https://github.com/d6e-ai/d6e-ai-keiri-example --skill d6e-workspace-api-client
-npx skills add https://github.com/d6e-ai/d6e-ai-keiri-example --skill d6e-prompt-driven-ui
+npx skills add https://gitlab.com/d6e-ai/d6e-ai-keiri-example --skill d6e-auth-integration
+npx skills add https://gitlab.com/d6e-ai/d6e-ai-keiri-example --skill d6e-workspace-api-client
+npx skills add https://gitlab.com/d6e-ai/d6e-ai-keiri-example --skill d6e-prompt-driven-ui
 ```
 
-These skills are auto-discovered by [skills.sh](https://skills.sh)
-from the `skills/<name>/SKILL.md` files in this repository and appear
-at `https://skills.sh/d6e-ai/d6e-ai-keiri-example/<skill-name>`.
+The [skills CLI](https://skills.sh) discovers the
+`skills/<name>/SKILL.md` files in this repository directly from the
+GitLab URL above. This repository is hosted on GitLab, so the full URL
+is required — the `owner/repo` shorthand only resolves against
+github.com and does not work here.
 
 ## Status & caveats
 

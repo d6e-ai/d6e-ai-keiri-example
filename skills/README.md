@@ -41,25 +41,22 @@ section at the bottom of each `SKILL.md` cross-links them.
 ## Installation
 
 ```bash
-npx skills add https://github.com/d6e-ai/d6e-ai-keiri-example --skill d6e-auth-integration
-npx skills add https://github.com/d6e-ai/d6e-ai-keiri-example --skill d6e-workspace-api-client
-npx skills add https://github.com/d6e-ai/d6e-ai-keiri-example --skill d6e-prompt-driven-ui
+npx skills add https://gitlab.com/d6e-ai/d6e-ai-keiri-example --skill d6e-auth-integration
+npx skills add https://gitlab.com/d6e-ai/d6e-ai-keiri-example --skill d6e-workspace-api-client
+npx skills add https://gitlab.com/d6e-ai/d6e-ai-keiri-example --skill d6e-prompt-driven-ui
 ```
 
 After installation, type `@skills` in Cursor Composer (or the
 equivalent in Claude Code) to verify the skills are available.
 
-## Discovery & Marketplace Listing
+## Discovery
 
-These skills are auto-discovered by [skills.sh](https://skills.sh)
-from the `skills/<name>/SKILL.md` files in this repository. They
-appear under:
-
-- <https://skills.sh/d6e-ai/d6e-ai-keiri-example/d6e-auth-integration>
-- <https://skills.sh/d6e-ai/d6e-ai-keiri-example/d6e-workspace-api-client>
-- <https://skills.sh/d6e-ai/d6e-ai-keiri-example/d6e-prompt-driven-ui>
-
-If a listing is missing, wait for the next skills.sh crawl cycle.
+The [skills CLI](https://skills.sh) discovers the
+`skills/<name>/SKILL.md` files in this repository directly from the
+GitLab URL above. This repository is hosted at
+<https://gitlab.com/d6e-ai/d6e-ai-keiri-example>, so always install
+with the full URL — the `owner/repo` shorthand only resolves against
+github.com and does not work for this repository.
 
 ## Why These Three?
 
