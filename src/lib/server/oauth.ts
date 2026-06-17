@@ -1,27 +1,27 @@
-// OAuth2 Authorization Code Flow against d6e-auth + the d6e instance.
+// OAuth2 Authorization Code Flow brokered through the d6e instance.
 //
 // Purpose:
-//   This module is the single place that knows how to talk to BOTH
-//   the central d6e-auth (https://www.d6e.ai) token endpoint AND the
-//   per-deployment d6e instance (${D6E_BASE_URL}) token endpoint.
-//   Login happens at d6e-auth; the resulting refresh token is then
-//   exchanged at the d6e instance so the access_token has the
-//   audience the d6e instance itself accepts on every Bearer call.
+//   This module drives the login that backs every Bearer call to the
+//   d6e instance (${D6E_BASE_URL}). The user logs in on d6e-auth's
+//   hosted page, but BOTH the authorization-code exchange and every
+//   later refresh hit the d6e INSTANCE's own token endpoint
+//   (${D6E_BASE_URL}/api/v1/auth/token). The instance injects its own
+//   OAuth client credentials when relaying to d6e-auth, so the pair it
+//   returns already carries the audience the instance accepts on Bearer
+//   calls. This frontend therefore never holds a client secret.
 //
 // Main specifications:
 //   - buildAuthorizeUrl(state): returns the absolute URL of the login
-//     page on d6e-auth with the client_id / redirect_uri / state query
-//     parameters that d6e-auth's /auth/login page expects.
-//   - exchangeAuthorizationCode(caller, code): POSTs to
-//     ${D6E_AUTH_URL}/api/v1/auth/token with grant_type=authorization_code
-//     and returns the resulting tokens + expiry. The access_token in the
-//     response has `iss=d6e-auth` and is NOT a valid Bearer for the
-//     d6e instance.
-//   - refreshAccessTokenViaBaseUrl(caller, refreshToken): POSTs to
-//     ${D6E_BASE_URL}/api/v1/auth/token with grant_type=refresh_token.
-//     The d6e instance accepts d6e-auth-issued refresh tokens here and
-//     returns a fresh pair signed for its own audience. This is the
-//     variant /auth/callback and session.ts use.
+//     page on d6e-auth. client_id is the d6e INSTANCE's OAuth client id
+//     (D6E_AUTH_CLIENT_ID mirrors the instance's own value); the
+//     instance's redirect-uri allow-list must include redirect_uri.
+//   - exchangeAuthorizationCode(caller, code): POSTs grant_type=
+//     authorization_code to ${D6E_BASE_URL}/api/v1/auth/token. No client
+//     credentials are sent; the instance adds them before forwarding to
+//     d6e-auth and returns a pair signed for its own audience.
+//   - refreshAccessTokenViaBaseUrl(caller, refreshToken): POSTs
+//     grant_type=refresh_token to the same instance endpoint. Used by
+//     session.ts for proactive refresh near expiry.
 //   - createOauthState(): cryptographically random opaque string used
 //     as the CSRF state parameter; stored in a short-lived cookie by
 //     /auth/login and verified by /auth/callback.
@@ -34,17 +34,15 @@
 //     verifies it on every request, and the cookie is HTTP-only so an
 //     attacker cannot forge one client-side. Local exp parsing is for
 //     deciding when to refresh proactively, not for authorization.
-//   - Both token endpoints are treated as synchronous; we apply a
-//     30 second timeout so a hung upstream does not block the
-//     SvelteKit hook pipeline indefinitely.
+//   - The token endpoint is treated as synchronous; we apply a 30
+//     second timeout so a hung upstream does not block the SvelteKit
+//     hook pipeline indefinitely.
+//   - A standalone-client variant (the frontend registers its own
+//     d6e-auth client and re-mints via refresh) is documented in
+//     skills/d6e-auth-integration/SKILL.md for deployments that cannot
+//     change the d6e instance's redirect-uri allow-list.
 
-import {
-	getD6eAuthClientId,
-	getD6eAuthClientSecret,
-	getD6eAuthRedirectUri,
-	getD6eAuthUrl,
-	getD6eUrl
-} from './env';
+import { getD6eAuthClientId, getD6eAuthRedirectUri, getD6eAuthUrl, getD6eUrl } from './env';
 
 const TOKEN_REQUEST_TIMEOUT_MS = 30_000;
 
@@ -71,7 +69,9 @@ export class OauthError extends Error {
 // Build the URL the user should be redirected to in order to log in.
 // d6e-auth's /auth/login page renders the email/password form when
 // client_id + redirect_uri are present and posts an authorization_code
-// back to redirect_uri once login succeeds.
+// back to redirect_uri once login succeeds. client_id here is the d6e
+// INSTANCE's OAuth client id (D6E_AUTH_CLIENT_ID mirrors the instance's
+// own value) so the code can later be exchanged at the instance.
 export function buildAuthorizeUrl(caller: string, state: string): string {
 	const authUrl = getD6eAuthUrl(caller);
 	const clientId = getD6eAuthClientId(caller);
@@ -140,34 +140,33 @@ export function decodeJwtExpMs(token: string): number | null {
 	return exp * 1000;
 }
 
+// Exchange the authorization code for a token pair at the d6e instance.
+// The instance relays the code to d6e-auth with its OWN client
+// credentials, so the pair it returns is already signed for the
+// audience every ${D6E_BASE_URL} Bearer endpoint accepts -- this
+// frontend holds no client secret. redirect_uri must be present and is
+// validated by the instance against ORIGIN + ALLOWED_REDIRECT_URIS.
 export async function exchangeAuthorizationCode(
 	caller: string,
 	code: string
 ): Promise<OauthTokens> {
-	const authUrl = getD6eAuthUrl(caller);
-	const clientId = getD6eAuthClientId(caller);
-	const clientSecret = getD6eAuthClientSecret(caller);
+	const baseUrl = getD6eUrl(caller);
 	const redirectUri = getD6eAuthRedirectUri(caller);
 
-	return postTokenEndpoint(caller, `${authUrl}/api/v1/auth/token`, {
+	return postTokenEndpoint(caller, `${baseUrl}/api/v1/auth/token`, {
 		grant_type: 'authorization_code',
 		code,
-		client_id: clientId,
-		client_secret: clientSecret,
 		redirect_uri: redirectUri
 	});
 }
 
 /**
- * Re-mint a refresh token at the d6e instance so the resulting
- * access_token has the audience expected by all `${D6E_BASE_URL}`
- * Bearer endpoints (file storage, workspaces, execute-by-intent).
- *
- * The d6e instance's `/api/v1/auth/token` accepts a d6e-auth-issued
- * refresh token as input and returns a fresh pair signed for itself —
- * the same trick `scripts/init-workspace.mjs` uses. No `client_id` /
- * `client_secret` is required against this endpoint because the
- * d6e instance already knows which OAuth client backs it.
+ * Refresh the session at the d6e instance's token endpoint. session.ts
+ * calls this when the access token nears expiry. The instance accepts
+ * the stored refresh token and returns a fresh pair signed for its own
+ * audience -- the same endpoint exchangeAuthorizationCode uses. No
+ * client_id / client_secret is sent: the instance injects its own
+ * credentials before relaying the grant to d6e-auth.
  */
 export async function refreshAccessTokenViaBaseUrl(
 	caller: string,

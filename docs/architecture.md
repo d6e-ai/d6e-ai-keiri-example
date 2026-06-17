@@ -27,10 +27,10 @@ sequenceDiagram
     App-->>User: 302 /auth/login
     User->>Auth: log in (email+password / Google)
     Auth-->>App: /auth/callback?code&state
-    App->>Auth: POST /api/v1/auth/token (authorization_code)
-    Auth-->>App: { access_token (iss=d6e-auth), refresh_token }
-    Note over App,Token: stage 2 — d6e-auth's access_token is rejected by<br/>the d6e instance API (aud mismatch), so re-mint at the d6e instance
-    App->>Token: POST /api/v1/auth/token (refresh_token)
+    App->>Token: POST /api/v1/auth/token (authorization_code)
+    Note over App,Token: the d6e instance relays the code to d6e-auth<br/>with its OWN client credentials, so the returned pair is<br/>signed for the audience the instance API expects
+    Token->>Auth: POST /api/v1/auth/token (authorization_code, instance creds)
+    Auth-->>Token: { access_token, refresh_token }
     Token-->>App: { access_token (d6e-instance audience), refresh_token }
     App->>Files: GET /api/v1/workspaces/{D6E_WORKSPACE_ID}<br/>(membership probe, Bearer d6e-instance token)
     Files-->>App: 200 OK (or 403 -> /auth/no-access)
@@ -70,13 +70,14 @@ sequenceDiagram
   from the `auth-access` cookie. There is no shared / long-lived
   server-side token.
 - The OAuth flow starts at `${D6E_AUTH_URL}` (e.g. `https://www.d6e.ai`)
-  for the user-facing login UI, but the resulting refresh token is
-  **immediately re-presented to `${D6E_BASE_URL}/api/v1/auth/token`**
-  (the d6e instance). Only the d6e-instance-signed pair is persisted
-  in cookies. d6e-auth's access tokens are never stored or used as
-  Bearer credentials — the d6e instance rejects them as `aud` mismatch
-  (`iss=d6e-auth`). After the two-stage exchange the same
-  d6e-instance JWT works for both Bearer-authed d6e instance API
+  for the user-facing login UI, but the authorization code is
+  **exchanged at `${D6E_BASE_URL}/api/v1/auth/token`** (the d6e
+  instance), which relays it to d6e-auth using the instance's own
+  client credentials. The returned pair is already signed for the
+  instance's audience, so this app holds no `client_secret` and never
+  stores a d6e-auth-issued access token. The d6e instance verifies the
+  `aud` claim of every Bearer token against its own client id, so the
+  same d6e-instance JWT works for both Bearer-authed d6e instance API
   calls and cookie-authed SvelteKit chat-session calls. Per-session
   refresh (`session.loadSession()`) also stays on the d6e instance
   endpoint so the rotated token never drifts back to a
@@ -147,7 +148,7 @@ messages/
 | Module                                                  | Responsibility                                                                                                                                                |
 | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `src/lib/server/env.ts`                                 | Validate `D6E_*` and `D6E_AUTH_*` env vars on first read with clear error messages.                                                                           |
-| `src/lib/server/oauth.ts`                               | Build authorize URLs, exchange codes at `${D6E_AUTH_URL}/api/v1/auth/token`, re-mint at `${D6E_BASE_URL}/api/v1/auth/token` (`refreshAccessTokenViaBaseUrl`), decode JWT `exp`, generate CSRF state. |
+| `src/lib/server/oauth.ts`                               | Build authorize URLs, exchange codes and refresh tokens at `${D6E_BASE_URL}/api/v1/auth/token` (the d6e instance brokers both to d6e-auth), decode JWT `exp`, generate CSRF state. |
 | `src/lib/server/session.ts`                             | Read / write the `auth-access` / `auth-refresh` / `auth-user` cookies; transparently refresh tokens against the d6e instance when within 60 seconds of expiry. |
 | `src/hooks.server.ts`                                   | Populate `event.locals.accessToken` / `event.locals.user` per request; redirect unauthenticated requests to `/auth/login`.                                    |
 | `src/lib/server/d6e-client.ts`                          | Bearer- and cookie-authed fetch wrappers for files / execute-by-intent / chat-sessions; every entry point now takes `accessToken: string` explicitly.         |

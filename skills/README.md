@@ -11,18 +11,18 @@ custom frontends.
 
 ## Available Skills
 
-| Skill                                                             | What it teaches                                                                                                                                                                                                                                                                                                               |
-| ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`d6e-auth-integration`](./d6e-auth-integration/SKILL.md)         | End-user OAuth2 with the mandatory two-stage token exchange (d6e-auth → d6e instance), HTTP-only session cookies, transparent refresh with in-flight deduplication, workspace allow-list, and the two-stage logout that also clears d6e-auth's session.                                                                       |
-| [`d6e-workspace-api-client`](./d6e-workspace-api-client/SKILL.md) | The server-side proxy layer (`/api/upload`, `/api/intent`, `/api/chat-sessions`), the `caller + accessToken + AbortSignal` wrapper convention in `src/lib/server/d6e-client.ts`, the Bearer vs `auth-token` cookie header matrix, and the SHA-256-keyed idempotent prompt-rule bootstrap in `scripts/init-workspace.mjs`.     |
-| [`d6e-prompt-driven-ui`](./d6e-prompt-driven-ui/SKILL.md)         | The three-layer pattern that turns LLM free-form text into structured UI: workspace prompts with `kind`-discriminated JSON inside fenced code blocks, Zod parse with markdown fallback, revision flows driven by XML tags, and the interactive "scenario append" pattern from `scripts/prompts/freee-registration-prompt.md`. |
+| Skill                                                             | What it teaches                                                                                                                                                                                                                                                                                                                         |
+| ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`d6e-auth-integration`](./d6e-auth-integration/SKILL.md)         | End-user OAuth2 with the instance-brokered token exchange (the d6e instance relays the code to d6e-auth, no client secret in the frontend) plus a standalone-client alternative, HTTP-only session cookies, transparent refresh with in-flight deduplication, workspace allow-list, and the logout that also clears d6e-auth's session. |
+| [`d6e-workspace-api-client`](./d6e-workspace-api-client/SKILL.md) | The server-side proxy layer (`/api/upload`, `/api/intent`, `/api/chat-sessions`), the `caller + accessToken + AbortSignal` wrapper convention in `src/lib/server/d6e-client.ts`, the Bearer vs `auth-token` cookie header matrix, and the SHA-256-keyed idempotent prompt-rule bootstrap in `scripts/init-workspace.mjs`.               |
+| [`d6e-prompt-driven-ui`](./d6e-prompt-driven-ui/SKILL.md)         | The three-layer pattern that turns LLM free-form text into structured UI: workspace prompts with `kind`-discriminated JSON inside fenced code blocks, Zod parse with markdown fallback, revision flows driven by XML tags, and the interactive "scenario append" pattern from `scripts/prompts/freee-registration-prompt.md`.           |
 
 ## How the Skills Fit Together
 
 ```mermaid
 flowchart TB
     UserGoal["Build a custom d6e-connected frontend"]
-    AuthSkill["d6e-auth-integration<br/>OAuth2 two-stage exchange<br/>+ session cookies + hooks"]
+    AuthSkill["d6e-auth-integration<br/>Instance-brokered OAuth2<br/>+ session cookies + hooks"]
     ApiSkill["d6e-workspace-api-client<br/>Bearer / Cookie proxies<br/>+ /api/upload + /api/intent"]
     PromptSkill["d6e-prompt-driven-ui<br/>kind-discriminator JSON<br/>+ Zod parse + fallback md"]
 
