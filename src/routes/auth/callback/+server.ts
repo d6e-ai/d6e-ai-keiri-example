@@ -2,27 +2,25 @@
 //
 // Purpose:
 //   Verifies the CSRF state, exchanges the authorization code for a JWT
-//   pair, RE-MINTS that pair at the d6e instance so the access
-//   token has the audience expected by every Bearer endpoint under
-//   ${D6E_BASE_URL}, then probes d6e (GET /api/v1/workspaces/{id}) to
-//   make sure the user is a member of the workspace this app is tied
-//   to. On success the d6e-instance pair is written to HTTP-only
-//   cookies and the user is bounced to the originally-requested URL.
-//   On membership failure the user is sent to /auth/no-access (cookies
-//   are cleared so they cannot see app data with a token that the d6e
-//   API would reject anyway).
+//   pair at the d6e instance's token endpoint (which signs it for the
+//   audience every Bearer endpoint under ${D6E_BASE_URL} accepts), then
+//   probes d6e (GET /api/v1/workspaces/{id}) to make sure the user is a
+//   member of the workspace this app is tied to. On success the pair is
+//   written to HTTP-only cookies and the user is bounced to the
+//   originally-requested URL. On membership failure the user is sent to
+//   /auth/no-access (cookies are cleared so they cannot see app data
+//   with a token that the d6e API would reject anyway).
 //
 // Main specifications:
 //   - state cookie format must match what /auth/login wrote:
 //     base64url(JSON({ state, returnTo })). Mismatched / missing state
 //     is treated as an open-redirect attempt and returns 400.
-//   - Token exchange runs in TWO stages:
-//       1. d6e-auth (${D6E_AUTH_URL}/api/v1/auth/token, authorization_code)
-//          -> returns a pair signed with `iss=d6e-auth`.
-//       2. d6e instance (${D6E_BASE_URL}/api/v1/auth/token, refresh_token)
-//          -> returns a pair signed with the audience the API expects.
-//     This mirrors how scripts/init-workspace.mjs upgrades its admin
-//     refresh token before talking to the d6e instance API.
+//   - Token exchange is a single call: POST authorization_code to the
+//     d6e instance (${D6E_BASE_URL}/api/v1/auth/token). The instance
+//     relays the code to d6e-auth with its own client credentials and
+//     returns a pair already signed for the audience the API expects,
+//     so no separate re-mint step is needed and this frontend holds no
+//     client secret.
 //   - Membership probe timeout: 10 seconds. Only an explicit 403/404
 //     from the workspace probe routes the user to /auth/no-access;
 //     transient errors (network timeout, DNS failure, 5xx from d6e)
@@ -37,12 +35,7 @@
 import { error, redirect } from '@sveltejs/kit';
 
 import { D6eClientError, verifyWorkspaceMembership } from '$lib/server/d6e-client';
-import {
-	constantTimeEqual,
-	exchangeAuthorizationCode,
-	OauthError,
-	refreshAccessTokenViaBaseUrl
-} from '$lib/server/oauth';
+import { constantTimeEqual, exchangeAuthorizationCode, OauthError } from '$lib/server/oauth';
 import {
 	clearOauthStateCookie,
 	clearSession,
@@ -108,34 +101,19 @@ export const GET: RequestHandler = async (event) => {
 		throw error(400, 'OAuth state mismatch');
 	}
 
-	// Stage 1: d6e-auth issues a pair signed with `iss=d6e-auth`. The
-	// d6e instance API rejects these as Bearer credentials (audience
-	// mismatch), so we cannot use them directly.
-	let authTokens;
+	// Exchange the code at the d6e instance. The instance relays it to
+	// d6e-auth with its own client credentials and returns a pair signed
+	// for the audience every ${D6E_BASE_URL} Bearer endpoint accepts, so
+	// the cookie value is usable directly without a separate re-mint.
+	let tokens;
 	try {
-		authTokens = await exchangeAuthorizationCode(CALLER_TAG, code);
+		tokens = await exchangeAuthorizationCode(CALLER_TAG, code);
 	} catch (err) {
 		if (err instanceof OauthError) {
 			console.error(`[${CALLER_TAG}] token exchange failed: ${err.message}`);
 		} else {
 			const msg = err instanceof Error ? err.message : String(err);
 			console.error(`[${CALLER_TAG}] token exchange unexpected error: ${msg}`);
-		}
-		throw redirect(302, '/auth/login');
-	}
-
-	// Stage 2: hand the d6e-auth refresh token to the d6e instance,
-	// which re-mints the pair against its own keypair. From this point
-	// on every cookie value is a d6e-instance-signed JWT.
-	let tokens;
-	try {
-		tokens = await refreshAccessTokenViaBaseUrl(CALLER_TAG, authTokens.refreshToken);
-	} catch (err) {
-		if (err instanceof OauthError) {
-			console.error(`[${CALLER_TAG}] d6e instance token exchange failed: ${err.message}`);
-		} else {
-			const msg = err instanceof Error ? err.message : String(err);
-			console.error(`[${CALLER_TAG}] d6e instance token exchange unexpected error: ${msg}`);
 		}
 		throw redirect(302, '/auth/login');
 	}

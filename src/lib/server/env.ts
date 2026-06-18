@@ -12,8 +12,8 @@
 //   - getD6eWorkspaceId(): UUID of the workspace this app operates on.
 //   - getD6eAuthUrl(): base URL of the d6e-auth service that issues
 //     OAuth2 authorization codes and JWT access tokens.
-//   - getD6eAuthClientId() / getD6eAuthClientSecret(): credentials of
-//     the registered_client row that maps this app to d6e-auth.
+//   - getD6eAuthClientId(): the d6e instance's OAuth client id (mirror
+//     of the instance's own D6E_AUTH_CLIENT_ID) used to drive login.
 //   - getD6eAuthRedirectUri(): callback URL registered with d6e-auth's
 //     registered_client.redirectUris array.
 //
@@ -60,17 +60,14 @@ export function getD6eAuthUrl(caller: string): string {
 	return requireEnv('D6E_AUTH_URL', caller).replace(/\/+$/, '');
 }
 
-// Client ID of the registered_client row that represents this app on
-// d6e-auth. The d6e-auth admin must create this row and add the
-// callback URL to its redirectUris array before login can succeed.
+// OAuth client id used to drive the login. In the instance-brokered
+// flow this is the d6e INSTANCE's own client id -- set it to the same
+// value as the instance's D6E_AUTH_CLIENT_ID. The instance's
+// redirect-uri allow-list (ORIGIN + ALLOWED_REDIRECT_URIS) must include
+// this app's callback URL before login can succeed. No client secret is
+// needed: the instance injects its own when relaying to d6e-auth.
 export function getD6eAuthClientId(caller: string): string {
 	return requireEnv('D6E_AUTH_CLIENT_ID', caller);
-}
-
-// Client secret paired with D6E_AUTH_CLIENT_ID. Never exposed to the
-// browser; only used server-side when POSTing to the token endpoint.
-export function getD6eAuthClientSecret(caller: string): string {
-	return requireEnv('D6E_AUTH_CLIENT_SECRET', caller);
 }
 
 // Callback URL registered with d6e-auth. Must match exactly one of the

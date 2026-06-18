@@ -149,19 +149,25 @@ the d6e frontend's admin UI for now.
 **Upstream reference:**
 [d6e `packages/frontend/src/routes/api/workspace-prompt-rules/+server.ts`](https://github.com/d6e-ai/d6e/blob/main/packages/frontend/src/routes/api/workspace-prompt-rules/+server.ts).
 
-## 4. End-user OAuth2 — two-stage token exchange
+## 4. End-user OAuth2 — instance-brokered token exchange
 
-**Hosted by:** d6e-auth (e.g. `https://www.d6e.ai`) **and** the per-app
-d6e instance (`${D6E_BASE_URL}`). Login happens at d6e-auth; the
-resulting refresh token is then re-minted at the d6e instance so the
-resulting access_token has the audience the d6e instance's own Bearer
-endpoints accept. Skipping this second exchange produces a 401 on
-every workspace / file / workflow call (audience-claim mismatch —
-d6e-auth signs tokens with `iss=d6e-auth`, which the d6e instance
-rejects).
+**Hosted by:** d6e-auth (e.g. `https://www.d6e.ai`) hosts the interactive
+login page; the per-app d6e instance (`${D6E_BASE_URL}`) hosts the token
+endpoint this app talks to. The authorization code is exchanged at the
+**d6e instance**, which relays it to d6e-auth using the instance's own
+OAuth client credentials and returns a token pair already signed for the
+audience the instance's own Bearer endpoints accept. Because the instance
+brokers the exchange, this frontend never holds a `client_secret`, and the
+access_token is usable as a Bearer credential against `${D6E_BASE_URL}`
+immediately — no separate re-mint step.
+
+> The audience matters: the d6e instance verifies the `aud` claim of every
+> Bearer token against its own configured OAuth client id, rejecting a
+> token minted for a different client with 401. Exchanging the code at the
+> instance guarantees the right `aud` from the very first call.
 
 This app implements the OAuth2 **Authorization Code** flow per end
-user. The flow lives in three SvelteKit routes:
+user. The flow lives in these SvelteKit routes:
 
 | Step                                | Endpoint                           |
 | ----------------------------------- | ---------------------------------- |
@@ -170,7 +176,7 @@ user. The flow lives in three SvelteKit routes:
 | Logout (local + upstream)           | `GET /auth/logout` (or POST form)  |
 | Membership reject                   | `GET /auth/no-access`              |
 
-### Stage 1 — d6e-auth (`${D6E_AUTH_URL}/api/v1/auth/token`)
+### Code exchange — d6e instance (`${D6E_BASE_URL}/api/v1/auth/token`)
 
 **Request body (JSON):**
 
@@ -178,40 +184,25 @@ user. The flow lives in three SvelteKit routes:
 {
 	"grant_type": "authorization_code",
 	"code": "<value from /auth/callback>",
-	"client_id": "<D6E_AUTH_CLIENT_ID>",
-	"client_secret": "<D6E_AUTH_CLIENT_SECRET>",
 	"redirect_uri": "<D6E_AUTH_REDIRECT_URI>"
 }
 ```
 
-The response shape is the standard OAuth2 token response
-(`access_token`, `refresh_token`, `token_type`, `expires_in`).
-**The `access_token` here is signed with `iss=d6e-auth` and cannot
-be used as a Bearer credential against `${D6E_BASE_URL}`.** This app
-discards it immediately and only keeps the `refresh_token`.
+No `client_id` / `client_secret` is sent by this app: the d6e instance
+injects its own when it forwards the grant to d6e-auth. The `redirect_uri`
+must be present (d6e-auth requires it for the authorization_code grant)
+and allow-listed on the instance — both in the instance's
+`registered_client.redirectUris` on d6e-auth and in the instance's
+`ALLOWED_REDIRECT_URIS` env var.
 
-### Stage 2 — d6e instance (`${D6E_BASE_URL}/api/v1/auth/token`)
+The d6e instance returns a token pair signed for its own audience, and
+**this pair is written straight to the user's cookies**. All subsequent
+refreshes (triggered by `loadSession()` when the access token is within
+60 seconds of expiry) hit the same endpoint with
+`grant_type=refresh_token`, so once the user is logged in we never call
+d6e-auth's token endpoint directly.
 
-**Request body (JSON):**
-
-```json
-{
-	"grant_type": "refresh_token",
-	"refresh_token": "<refresh_token from stage 1>"
-}
-```
-
-No `client_id` / `client_secret` is required against the d6e instance:
-the instance already knows which OAuth client backs it. The d6e
-instance returns a fresh token pair signed for its own audience, and
-**only this pair is written to the user's cookies**.
-
-All subsequent refreshes (triggered by `loadSession()` when the
-access token is within 60 seconds of expiry) use this same d6e
-instance endpoint, so once the user is logged in we never touch
-d6e-auth again until the next interactive login.
-
-**Response shape (both stages):**
+**Response shape (exchange + refresh):**
 
 ```json
 {
@@ -224,22 +215,30 @@ d6e-auth again until the next interactive login.
 
 Notes:
 
-- Both endpoints rotate `refresh_token` on every call. The app stores
-  the rotated value from stage 2 in the user's `auth-refresh` cookie
-  (HTTP-only, SameSite=Lax, 30-day cap), so the next refresh
-  round-trip always uses the freshest d6e-instance-issued token.
+- The endpoint rotates `refresh_token` on every call. The app stores the
+  rotated value in the user's `auth-refresh` cookie (HTTP-only,
+  SameSite=Lax, 30-day cap), so the next refresh round-trip always uses
+  the freshest token.
 - 4xx responses cause the user to be bounced back to `/auth/login` so
   they can try again with a fresh authorization code.
 - 5xx responses are transient and surface as a 502 client error.
 
 **This app's wrappers:**
-[`src/lib/server/oauth.ts`](../src/lib/server/oauth.ts) (token
-endpoints — `exchangeAuthorizationCode()` for stage 1,
-`refreshAccessTokenViaBaseUrl()` for stage 2),
-[`src/lib/server/session.ts`](../src/lib/server/session.ts) (cookie
-store and exp-based refresh, always via the d6e instance), and
+[`src/lib/server/oauth.ts`](../src/lib/server/oauth.ts)
+(`exchangeAuthorizationCode()` for the code exchange,
+`refreshAccessTokenViaBaseUrl()` for refresh — both target the d6e
+instance), [`src/lib/server/session.ts`](../src/lib/server/session.ts)
+(cookie store and exp-based refresh), and
 [`src/hooks.server.ts`](../src/hooks.server.ts) (per-request session
 loading + unauthenticated redirect).
+
+> **Alternative — standalone client.** A frontend that cannot change the
+> d6e instance's redirect-uri allow-list can register its own
+> `registered_client` on d6e-auth (own `client_id` / `client_secret`),
+> exchange the code at `${D6E_AUTH_URL}/api/v1/auth/token`, then re-mint
+> the refresh token at `${D6E_BASE_URL}/api/v1/auth/token` to obtain an
+> instance-audience pair. See
+> [`skills/d6e-auth-integration/SKILL.md`](../skills/d6e-auth-integration/SKILL.md).
 
 ### Logout — local cookies + d6e-auth session
 
@@ -256,7 +255,7 @@ The upstream hop is required because d6e-auth holds its own session
 cookie on `${D6E_AUTH_URL}`. Without step 2, hitting `/auth/login`
 immediately after a logout would just call back to
 `${D6E_AUTH_URL}/auth/login` with the still-live session, d6e-auth
-would silently issue a fresh `code`, this app would run the two-stage
+would silently issue a fresh `code`, this app would run the code
 exchange again, and the user would end up logged in within ~200 ms
 of clicking "logout".
 
@@ -419,8 +418,8 @@ pastes the activation file again.
 | `GET /api/v1/workspaces/{id}`                         | `Authorization: Bearer <access_token>` | same as above (only called from `/auth/callback`)                       |
 | `POST /api/workflows/execute-by-intent`               | `Authorization: Bearer <access_token>` | same as above                                                           |
 | `/api/chat-sessions[*]`                               | `Cookie: auth-token=<access_token>`    | same as above (re-emitted as a server-to-server cookie)                 |
-| `POST ${D6E_AUTH_URL}/api/v1/auth/token` (user, stage 1) | JSON `code`                            | OAuth2 authorization code received by `/auth/callback`                  |
-| `POST ${D6E_BASE_URL}/api/v1/auth/token` (user, stage 2 / refresh) | JSON `refresh_token`         | rotated `auth-refresh` cookie value (or stage 1 output on login)        |
+| `POST ${D6E_BASE_URL}/api/v1/auth/token` (user, code exchange) | JSON `code` + `redirect_uri`  | OAuth2 authorization code from `/auth/callback`; instance brokers it to d6e-auth |
+| `POST ${D6E_BASE_URL}/api/v1/auth/token` (user, refresh) | JSON `refresh_token`               | rotated `auth-refresh` cookie value                                     |
 | `POST ${D6E_BASE_URL}/api/v1/auth/token` (init)       | JSON `refresh_token`                   | `D6E_INIT_REFRESH_TOKEN` (admin-only, never used by the user flow)      |
 | `POST /api/workspace-prompt-rules`                    | `Cookie: auth-token=<access_token>`    | access token issued by the init refresh above                           |
 

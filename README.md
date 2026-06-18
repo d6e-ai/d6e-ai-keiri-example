@@ -26,10 +26,10 @@ sequenceDiagram
     App-->>User: 302 /auth/login
     User->>Auth: log in with email+password or Google
     Auth-->>App: redirect ?code=...&state=...
-    App->>Auth: POST /api/v1/auth/token (authorization_code)
-    Auth-->>App: access_token (iss=d6e-auth) + refresh_token
-    Note over App,Files: stage 2 — re-mint at the d6e instance so the access_token has the audience the d6e instance API expects
-    App->>Files: POST /api/v1/auth/token (refresh_token)
+    App->>Files: POST /api/v1/auth/token (authorization_code)
+    Note over App,Files: the d6e instance relays the code to d6e-auth with its OWN client credentials
+    Files->>Auth: POST /api/v1/auth/token (authorization_code, instance creds)
+    Auth-->>Files: access_token + refresh_token
     Files-->>App: access_token (d6e-instance audience) + refresh_token
     Note over App,Files: tokens written to HTTP-only cookies
     App->>Files: GET /api/v1/workspaces/{wsId} (membership check)
@@ -93,15 +93,14 @@ npm install
 
 Copy `.env.example` to `.env` and fill in the values:
 
-| Variable                 | Used by                                            | How to obtain                                                                                         |
-| ------------------------ | -------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `D6E_BASE_URL`           | `/api/upload`, `/api/intent`, `/api/chat-sessions` | Base URL of the d6e instance (e.g. `https://your-d6e-instance.example.com`)                           |
-| `D6E_WORKSPACE_ID`       | all calls                                          | UUID of the d6e workspace this app should operate on                                                  |
-| `D6E_AUTH_URL`           | `/auth/login`, `/auth/callback`, refresh           | Base URL of the d6e-auth instance (e.g. `https://www.d6e.ai`)                                         |
-| `D6E_AUTH_CLIENT_ID`     | server-side OAuth                                  | `client_id` of the `registered_client` row that maps this app to d6e-auth                             |
-| `D6E_AUTH_CLIENT_SECRET` | server-side OAuth                                  | `client_secret` paired with `D6E_AUTH_CLIENT_ID`                                                      |
-| `D6E_AUTH_REDIRECT_URI`  | `/auth/login`, `/auth/callback`                    | Callback URL exposed by this app (e.g. `http://localhost:5173/auth/callback`). Must be pre-registered |
-| `D6E_INIT_REFRESH_TOKEN` | `npm run init` only                                | Long-lived `auth-refresh` cookie value from a workspace-ADMIN browser session on `D6E_BASE_URL`       |
+| Variable                 | Used by                                            | How to obtain                                                                                               |
+| ------------------------ | -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `D6E_BASE_URL`           | `/api/upload`, `/api/intent`, `/api/chat-sessions` | Base URL of the d6e instance (e.g. `https://your-d6e-instance.example.com`)                                 |
+| `D6E_WORKSPACE_ID`       | all calls                                          | UUID of the d6e workspace this app should operate on                                                        |
+| `D6E_AUTH_URL`           | `/auth/login`, `/auth/callback`, refresh           | Base URL of the d6e-auth instance (e.g. `https://www.d6e.ai`)                                               |
+| `D6E_AUTH_CLIENT_ID`     | server-side OAuth                                  | The d6e **instance's** own OAuth `client_id` (mirror its `D6E_AUTH_CLIENT_ID`); no client secret needed     |
+| `D6E_AUTH_REDIRECT_URI`  | `/auth/login`, `/auth/callback`                    | Callback URL exposed by this app (e.g. `http://localhost:5173/auth/callback`). Allow-listed on the instance |
+| `D6E_INIT_REFRESH_TOKEN` | `npm run init` only                                | Long-lived `auth-refresh` cookie value from a workspace-ADMIN browser session on `D6E_BASE_URL`             |
 
 > Managed d6e deployments expose the Rust API (`/api/v1/...`) and the
 > SvelteKit frontend (everything else) on the same origin via a reverse
@@ -110,15 +109,22 @@ Copy `.env.example` to `.env` and fill in the values:
 > dedicated accessor in `src/lib/server/env.ts` and update the callers
 > in `src/lib/server/d6e-client.ts`.
 
-> **Before logins work**, the d6e-auth administrator must:
+> **Before logins work**, the d6e instance operator must allow this
+> app's callback URL. The code exchange is brokered by the instance, so
+> this app needs no client secret of its own:
 >
-> 1. Create a `registered_client` row for this app on d6e-auth.
-> 2. Add the callback URL of every environment (e.g.
+> 1. Add the callback URL of every environment (e.g.
 >    `http://localhost:5173/auth/callback` for dev,
->    `https://<your-deploy>.vercel.app/auth/callback` for prod) to
->    that row's `redirect_uris` array.
-> 3. Hand the resulting `client_id` / `client_secret` to operators of
->    this app so they can populate `.env`.
+>    `https://<your-deploy>.vercel.app/auth/callback` for prod) to the
+>    **instance's** `registered_client.redirectUris` on d6e-auth.
+> 2. Add the same URL(s) to the instance's `ALLOWED_REDIRECT_URIS` env
+>    var (comma-separated); Compose passes it through via `env_file: .env`.
+> 3. Set `D6E_AUTH_CLIENT_ID` to the instance's own client id in `.env`.
+>
+> Developers who do not operate the instance can instead register their
+> own d6e-auth client; see
+> [`skills/d6e-auth-integration/SKILL.md`](./skills/d6e-auth-integration/SKILL.md)
+> for that standalone-client variant.
 
 > Every end user authenticates with their own d6e-auth account. Their
 > JWT access token is stored in an HTTP-only `auth-access` cookie and
@@ -200,7 +206,7 @@ this codebase as a reference:
 
 | Skill                                                                    | Concern                                                                                                                                                                  |
 | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| [`d6e-auth-integration`](./skills/d6e-auth-integration/SKILL.md)         | OAuth2 two-stage exchange (d6e-auth → d6e instance), session cookies, transparent refresh, workspace allow-list.                                                         |
+| [`d6e-auth-integration`](./skills/d6e-auth-integration/SKILL.md)         | Instance-brokered OAuth2 login (plus a standalone-client alternative), session cookies, transparent refresh, workspace allow-list.                                       |
 | [`d6e-workspace-api-client`](./skills/d6e-workspace-api-client/SKILL.md) | Bearer vs cookie header matrix, the `caller + accessToken + AbortSignal` wrapper convention in `src/lib/server/d6e-client.ts`, and the idempotent prompt-rule bootstrap. |
 | [`d6e-prompt-driven-ui`](./skills/d6e-prompt-driven-ui/SKILL.md)         | `kind`-discriminated JSON inside fenced code blocks, Zod parse with markdown fallback, XML-tag revision flows, scenario-append activation via the d6e chat UI.           |
 
@@ -230,11 +236,10 @@ github.com and does not work here.
   cookies. There is no persistent server-side session store; cookies
   are HTTP-only and rotated via the d6e instance's
   `${D6E_BASE_URL}/api/v1/auth/token` endpoint when they are about to
-  expire. d6e-auth is only touched during the initial interactive
-  login at `/auth/callback`; after the two-stage exchange every
-  subsequent refresh stays on the same d6e instance so the
-  resulting access_token retains the audience the d6e instance API
-  requires.
+  expire. d6e-auth hosts the interactive login page, but both the
+  authorization-code exchange and every refresh go through the d6e
+  instance, so the resulting access_token always carries the audience
+  the d6e instance API requires.
 - The journal table is read-only. Revisions happen by sending a
   natural-language correction back to the LLM (see
   `docs/llm-output-contract.md`). Files cannot be added or removed

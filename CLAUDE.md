@@ -65,30 +65,36 @@ docs/
 
 ## Environment variables
 
-See `.env.example`. The app implements a full OAuth2 Authorization
-Code flow against `D6E_AUTH_URL` (e.g. `https://www.d6e.ai`) with a
-mandatory **two-stage token exchange**:
+See `.env.example`. The app implements the OAuth2 Authorization Code
+flow with an **instance-brokered token exchange**:
 
-1. `/auth/callback` exchanges the `code` at d6e-auth — receives an
-   `access_token` signed with `iss=d6e-auth` plus a `refresh_token`.
-2. The `refresh_token` is immediately re-presented to
-   `${D6E_BASE_URL}/api/v1/auth/token` (the d6e instance), which
-   returns a fresh pair signed for **its own** audience. Only this
-   second pair is written to cookies.
+1. The user logs in at d6e-auth (`D6E_AUTH_URL`, e.g.
+   `https://www.d6e.ai`) and is bounced back with a `code`.
+2. `/auth/callback` exchanges that `code` at the **d6e instance**
+   (`${D6E_BASE_URL}/api/v1/auth/token`), which relays it to d6e-auth
+   using the instance's own client credentials and returns a pair
+   already signed for the instance's audience. This frontend therefore
+   holds **no client secret**, and the returned pair is written to
+   cookies directly.
 
-Skipping stage 2 produces a `401` on every workspace / file / workflow
-call because the d6e instance rejects access tokens with
-`iss=d6e-auth`. This mirrors how `scripts/init-workspace.mjs` upgrades
-the admin `D6E_INIT_REFRESH_TOKEN` before talking to the d6e instance
-API.
+Because the exchange happens at the instance, the access token always
+carries the audience the d6e instance API requires; every later refresh
+hits the same instance endpoint. The instance only accepts redirect URIs
+on its allow-list, so the operator must add this app's callback to both
+the instance's `registered_client.redirectUris` on d6e-auth and the
+instance's `ALLOWED_REDIRECT_URIS`. A standalone-client variant (own
+d6e-auth client + two-stage re-mint) is documented in
+`skills/d6e-auth-integration/SKILL.md` for frontends that cannot edit
+that allow-list.
 
 Required env vars:
 
 - `D6E_BASE_URL`, `D6E_WORKSPACE_ID` — the d6e instance and workspace
   this app targets.
-- `D6E_AUTH_URL`, `D6E_AUTH_CLIENT_ID`, `D6E_AUTH_CLIENT_SECRET`,
-  `D6E_AUTH_REDIRECT_URI` — d6e-auth client credentials. The
-  `registered_client.redirectUris` array on d6e-auth must include
+- `D6E_AUTH_URL`, `D6E_AUTH_CLIENT_ID`, `D6E_AUTH_REDIRECT_URI` —
+  d6e-auth login URL plus the d6e instance's own OAuth `client_id`
+  (no client secret). The instance's `registered_client.redirectUris`
+  on d6e-auth **and** its `ALLOWED_REDIRECT_URIS` must both include
   `D6E_AUTH_REDIRECT_URI` exactly before logins work.
 - `D6E_INIT_REFRESH_TOKEN` — admin-only refresh token used **only** by
   `scripts/init-workspace.mjs` to POST the workspace prompt rule.
@@ -161,7 +167,7 @@ opened, keep the description in sync with what actually changed.
 This repo also publishes three reusable Agent Skills for AI agents
 building their own d6e-connected frontends:
 
-- [`skills/d6e-auth-integration/SKILL.md`](./skills/d6e-auth-integration/SKILL.md) — OAuth2 two-stage exchange + session cookies + hooks.
+- [`skills/d6e-auth-integration/SKILL.md`](./skills/d6e-auth-integration/SKILL.md) — instance-brokered OAuth2 (+ standalone-client alternative) + session cookies + hooks.
 - [`skills/d6e-workspace-api-client/SKILL.md`](./skills/d6e-workspace-api-client/SKILL.md) — Bearer/cookie header matrix, `caller + accessToken` wrapper convention, idempotent prompt-rule bootstrap.
 - [`skills/d6e-prompt-driven-ui/SKILL.md`](./skills/d6e-prompt-driven-ui/SKILL.md) — `kind`-discriminated JSON contracts, Zod parse with markdown fallback, XML-tag revision flow, scenario-append activation.
 
