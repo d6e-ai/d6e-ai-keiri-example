@@ -57,7 +57,7 @@
 
 ## Agent Skills (`skills/`)
 
-- `skills/<skill-name>/SKILL.md` 形式で 3 つの Agent Skill を同梱している (`d6e-auth-integration` / `d6e-workspace-api-client` / `d6e-prompt-driven-ui`)。インストールは `npx skills add https://gitlab.com/d6e-ai/d6e-ai-keiri-example --skill <name>` で行う (リポジトリは GitLab に移行済み。GitHub の `owner/repo` 省略記法は github.com に展開されるため使えない)。
+- `skills/<skill-name>/SKILL.md` 形式で 3 つの Agent Skill を同梱している (`d6e-auth-integration` / `d6e-workspace-api-client` / `d6e-prompt-driven-ui`)。インストールは `npx skills add https://gitlab.com/cauchye/d6e-ai/d6e-custom-frontend-skills --skill <name>` で行う (リポジトリは GitLab に移行済み。GitHub の `owner/repo` 省略記法は github.com に展開されるため使えない)。
 - 各 `SKILL.md` は本リポジトリの実装 (`src/lib/server/**`, `src/routes/auth/**`, `src/routes/api/**`, `scripts/prompts/**` など) を参照リンクで指す。実装側を変えたら該当 `SKILL.md` の説明 / リンクも同 PR で更新する。
 - YAML frontmatter (`name` / `description`) は英語必須。`description` には「トリガフレーズ」(when to use) を含め、skills CLI の検索や Cursor の `@skills` ピッカーでヒットしやすい文面にする。
 - Skill 本文は英語ベース。トリガ例だけ日本語と英語を併記して多言語チャット利用者をカバーする。

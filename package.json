@@ -1,6 +1,6 @@
 {
-	"name": "d6e-ai-keiri-example",
-	"description": "Example AI accounting frontend that calls d6e's /api/workflows/execute-by-intent",
+	"name": "d6e-custom-frontend-skills",
+	"description": "Agent Skills + reference AI accounting frontend showing how to build a custom UI on d6e's /api/workflows/execute-by-intent",
 	"private": true,
 	"version": "0.0.1",
 	"type": "module",
