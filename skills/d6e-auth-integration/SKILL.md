@@ -134,7 +134,7 @@ Refresh **always** targets `${D6E_BASE_URL}/api/v1/auth/token`, never
 d6e-auth, so the rotated access token keeps its
 d6e-instance-issued audience.
 
-### Workspace allow-list
+### Workspace allow-list and pending invitations
 
 After the code exchange, `/auth/callback` calls
 `GET ${D6E_BASE_URL}/api/v1/workspaces/${D6E_WORKSPACE_ID}` with the
@@ -142,6 +142,48 @@ freshly issued Bearer. Only an explicit `403` or `404` routes the user
 to `/auth/no-access`; transient errors (timeout, 5xx) fall back to
 `/auth/login` so the user can retry without seeing a misleading
 "contact your administrator" message.
+
+The d6e instance auto-converts **pending invitations** into real
+memberships on the user's first JWT-authenticated request, so the
+frontend never has to special-case the "first login of an invited
+email" path:
+
+- When an admin POSTs `/api/v1/workspaces/{id}/members` for an email
+  that does not yet exist in the d6e instance, the row lands in a
+  separate `workspace_invitation` table instead of
+  `workspace_membership` (see the [`d6e-workspace-api-client`](../d6e-workspace-api-client/SKILL.md)
+  skill for the admin CRUD that exposes these rows).
+- The d6e auth layer's `provision_jwt_user` calls
+  `apply_pending_invitations(db, user_id, email)` whenever it sees a
+  JWT, looking up any `workspace_invitation` row whose lowercased
+  `email` matches the JWT's `email` claim. Matching rows are converted
+  into `workspace_membership` rows inside the same provisioning step,
+  and the invitation row is deleted only after the membership INSERT
+  succeeds (so a transient DB failure simply retries on the next
+  request rather than dropping the invitation).
+- Email case is folded server-side (`Foo@example.com` and
+  `foo@example.com` resolve to the same membership), so the frontend
+  must **not** lowercase or otherwise rewrite the JWT claim before
+  passing it through.
+
+Operational consequence: a workspace admin can pre-invite a user
+who has never logged in to the d6e instance, and the moment that user
+completes their first sign-in through this app's `/auth/login`, the
+subsequent `verifyWorkspaceMembership` probe at `/auth/callback`
+returns 200 without any additional steps. No frontend code change is
+required to support this flow — the existing 200 / 403 / 404 / retry
+branching keeps working.
+
+What the frontend should NOT do:
+
+- **Do not** treat 403 / 404 differently for pre-invited emails. By the
+  time `/auth/callback` runs the probe, the invitation has already
+  been consumed (or it never matched). A 403/404 still means "not a
+  member, route to `/auth/no-access`".
+- **Do not** retry the probe with a backoff hoping a pending
+  invitation lands. The conversion is synchronous inside
+  `provision_jwt_user`; if it didn't fire on this request it isn't
+  going to fire on the immediate retry either.
 
 ### Two-stage logout
 
@@ -358,10 +400,11 @@ member" (route to `/auth/no-access`) from "couldn't ask" (route to
 - [ ] `loadSession()` refreshes via `${D6E_BASE_URL}/api/v1/auth/token` (the d6e instance), not d6e-auth.
 - [ ] `hooks.server.ts` populates `event.locals.accessToken` and `event.locals.user` from `loadSession()` before any route reads them.
 - [ ] `/auth/logout` is POST-only and 303-redirects through `${D6E_AUTH_URL}/auth/logout`.
-- [ ] `/auth/callback` calls `verifyWorkspaceMembership()` and routes 403/404 to `/auth/no-access`.
+- [ ] `/auth/callback` calls `verifyWorkspaceMembership()` and routes 403/404 to `/auth/no-access` **without** any special case for "pre-invited" emails — the d6e instance auto-converts pending invitations into memberships during JWT provisioning.
 - [ ] The state cookie value is constant-time compared against the `state` query param.
 - [ ] `returnTo` is restricted to same-origin paths and rejects `/auth/*` to prevent post-login loops.
 - [ ] Refresh tokens are deduplicated by value to survive concurrent requests in the grace window.
+- [ ] Operator-facing docs explain the "invite by email, ask user to sign in, no extra config" flow so admins don't try to manually flip status flags after the user logs in.
 
 ## Best Practices
 
@@ -420,6 +463,20 @@ The user is not a member of `D6E_WORKSPACE_ID`. Add them through the
 d6e admin UI, or change the environment variable to a workspace they
 do belong to. Transient failures (504, timeout) should NOT route to
 `/auth/no-access`; route to `/auth/login` so the user can retry.
+
+If the user **was** pre-invited as a pending invitation but the probe
+still returns 403/404, check that:
+
+- The invitation email and the JWT's `email` claim agree after both
+  sides are lowercased — the conversion uses
+  `email.trim().to_lowercase()` in `apply_pending_invitations`.
+- The target workspace is not soft-deleted (`workspace.deleted_at IS
+NULL`). Soft-deleted workspaces are filtered out of the auto-promote
+  loop on purpose.
+- The d6e instance's logs do not show
+  `Failed to apply pending invitation ...` warnings — those indicate a
+  transient DB error that needs another login attempt to retry the
+  insert. (The invitation row is preserved until the INSERT succeeds.)
 
 ### Sidebar shows wrong user after refresh
 
