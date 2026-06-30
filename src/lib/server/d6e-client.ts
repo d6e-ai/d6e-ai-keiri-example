@@ -149,7 +149,7 @@ export async function uploadFile(
 	const formData = new FormData();
 	const blob = new Blob([new Uint8Array(payload.content)], { type: contentType });
 	formData.append('file', blob, payload.filename);
-	formData.append('metadata', JSON.stringify({ source: 'd6e-ai-keiri-example' }));
+	formData.append('metadata', JSON.stringify({ source: 'd6e-custom-frontend-skills' }));
 
 	const url = `${apiUrl}/api/v1/workspaces/${workspaceId}/files/multipart`;
 	let response: Response;

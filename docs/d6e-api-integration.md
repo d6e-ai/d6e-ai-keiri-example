@@ -19,7 +19,7 @@ The access token comes from `event.locals.accessToken`, which
 
 **Request:** `multipart/form-data` with one `file` field carrying the
 raw file bytes and one `metadata` field containing a JSON-encoded
-object (this app sends `{"source":"d6e-ai-keiri-example"}`).
+object (this app sends `{"source":"d6e-custom-frontend-skills"}`).
 
 **Response (JSON):**
 
@@ -44,7 +44,7 @@ removes a queued file before pressing "Generate journal",
 forwards a DELETE to the same Rust endpoint to clean up the orphan.
 
 **Upstream reference:**
-[d6e `packages/frontend/src/routes/api/workspaces/[workspaceId]/files/upload/+server.ts`](https://github.com/d6e-ai/d6e/blob/main/packages/frontend/src/routes/api/workspaces/%5BworkspaceId%5D/files/upload/+server.ts)
+[d6e `packages/frontend/src/routes/api/workspaces/[workspaceId]/files/upload/+server.ts`](https://gitlab.com/cauchye/d6e-ai/d6e/-/blob/main/packages/frontend/src/routes/api/workspaces/%5BworkspaceId%5D/files/upload/+server.ts)
 (the d6e frontend's own proxy of the same Rust endpoint).
 
 ## 2. Natural-language workflow — `/api/workflows/execute-by-intent`
@@ -108,7 +108,7 @@ uses [`executeByIntent()`](../src/lib/server/d6e-client.ts) to relay the
 upstream response unchanged.
 
 **Upstream reference:**
-[d6e `packages/frontend/src/routes/api/workflows/execute-by-intent/+server.ts`](https://github.com/d6e-ai/d6e/blob/main/packages/frontend/src/routes/api/workflows/execute-by-intent/+server.ts).
+[d6e `packages/frontend/src/routes/api/workflows/execute-by-intent/+server.ts`](https://gitlab.com/cauchye/d6e-ai/d6e/-/blob/main/packages/frontend/src/routes/api/workflows/execute-by-intent/+server.ts).
 
 ## 3. Workspace prompt rule — `/api/workspace-prompt-rules`
 
@@ -147,7 +147,7 @@ the d6e frontend's admin UI for now.
 `scripts/prompts/ai-keiri-prompt.md` and POSTs it once.
 
 **Upstream reference:**
-[d6e `packages/frontend/src/routes/api/workspace-prompt-rules/+server.ts`](https://github.com/d6e-ai/d6e/blob/main/packages/frontend/src/routes/api/workspace-prompt-rules/+server.ts).
+[d6e `packages/frontend/src/routes/api/workspace-prompt-rules/+server.ts`](https://gitlab.com/cauchye/d6e-ai/d6e/-/blob/main/packages/frontend/src/routes/api/workspace-prompt-rules/+server.ts).
 
 ## 4. End-user OAuth2 — instance-brokered token exchange
 
@@ -260,7 +260,7 @@ exchange again, and the user would end up logged in within ~200 ms
 of clicking "logout".
 
 `d6e-auth`'s logout endpoint reference:
-[d6e-auth `src/routes/auth/logout/+server.ts`](https://github.com/d6e-ai/d6e-auth/blob/main/src/routes/auth/logout/+server.ts).
+[d6e-auth `src/routes/auth/logout/+server.ts`](https://gitlab.com/cauchye/d6e-ai/d6e-auth/-/blob/main/src/routes/auth/logout/+server.ts).
 
 ### Workspace allow-list
 
@@ -405,9 +405,9 @@ pastes the activation file again.
 
 **Upstream references:**
 
-- MCP tool descriptor: [d6e `packages/mcp/src/server/mod.rs`](https://github.com/d6e-ai/d6e/blob/main/packages/mcp/src/server/mod.rs)
-- Proxy implementation: [d6e `packages/api/src/routes/v1/saas_proxy.rs`](https://github.com/d6e-ai/d6e/blob/main/packages/api/src/routes/v1/saas_proxy.rs)
-- Provider catalog: [d6e `packages/frontend/src/lib/saas-providers/catalog.ts`](https://github.com/d6e-ai/d6e/blob/main/packages/frontend/src/lib/saas-providers/catalog.ts)
+- MCP tool descriptor: [d6e `packages/mcp/src/server/mod.rs`](https://gitlab.com/cauchye/d6e-ai/d6e/-/blob/main/packages/mcp/src/server/mod.rs)
+- Proxy implementation: [d6e `packages/api/src/routes/v1/saas_proxy.rs`](https://gitlab.com/cauchye/d6e-ai/d6e/-/blob/main/packages/api/src/routes/v1/saas_proxy.rs)
+- Provider catalog: [d6e `packages/frontend/src/lib/saas-providers/catalog.ts`](https://gitlab.com/cauchye/d6e-ai/d6e/-/blob/main/packages/frontend/src/lib/saas-providers/catalog.ts)
 
 ## Auth model summary
 

@@ -1,22 +1,34 @@
-# d6e-ai-keiri-example
+# d6e-custom-frontend-skills
 
-An example AI accounting application that demonstrates how to build a thin
-frontend on top of the [d6e](https://github.com/d6e-ai/d6e) platform's
-`/api/workflows/execute-by-intent` endpoint.
+A reusable [Agent Skills](./skills/README.md) package for building
+custom frontends on top of the [d6e](https://gitlab.com/cauchye/d6e-ai/d6e)
+platform — paired with a working reference implementation: a thin
+AI accounting (AI 経理 / keiri) frontend that demonstrates how to
+call d6e's `/api/workflows/execute-by-intent` endpoint end-to-end.
 
-## What this app does
+This repository serves two audiences:
+
+1. **AI agents / developers building their own d6e-connected
+   frontends** → consume the three skills under [`skills/`](./skills/)
+   (OAuth2 login, server-side workspace API proxy, and prompt-driven
+   JSON UI contracts).
+2. **Developers learning by example** → read the SvelteKit app under
+   [`src/`](./src/), which is the reference implementation each skill
+   cites.
+
+## What the reference app does
 
 The user signs in with their own d6e-auth account, uploads one or more
 receipt images, presses "Generate journal", and the AI produces a
 freee-compatible journal entry. The user revises it with free-form
 Japanese until it looks right. There is no real accounting backend —
-this repository exists to show how to wire up d6e for a single-purpose
-vertical app, including the OAuth2 login flow.
+the app exists to show how to wire up d6e for a single-purpose vertical
+app, including the OAuth2 login flow.
 
 ````mermaid
 sequenceDiagram
     participant User as Browser
-    participant App as d6e-ai-keiri-example (this app)
+    participant App as d6e-custom-frontend-skills (this app)
     participant Auth as d6e-auth (www.d6e.ai)
     participant Files as d6e API (files)
     participant Intent as d6e SvelteKit (/api/workflows/execute-by-intent)
@@ -213,9 +225,9 @@ this codebase as a reference:
 Install in your agent:
 
 ```bash
-npx skills add https://gitlab.com/d6e-ai/d6e-ai-keiri-example --skill d6e-auth-integration
-npx skills add https://gitlab.com/d6e-ai/d6e-ai-keiri-example --skill d6e-workspace-api-client
-npx skills add https://gitlab.com/d6e-ai/d6e-ai-keiri-example --skill d6e-prompt-driven-ui
+npx skills add https://gitlab.com/cauchye/d6e-ai/d6e-custom-frontend-skills --skill d6e-auth-integration
+npx skills add https://gitlab.com/cauchye/d6e-ai/d6e-custom-frontend-skills --skill d6e-workspace-api-client
+npx skills add https://gitlab.com/cauchye/d6e-ai/d6e-custom-frontend-skills --skill d6e-prompt-driven-ui
 ```
 
 The [skills CLI](https://skills.sh) discovers the
