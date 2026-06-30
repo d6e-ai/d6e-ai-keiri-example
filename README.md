@@ -16,6 +16,38 @@ This repository serves two audiences:
    [`src/`](./src/), which is the reference implementation each skill
    cites.
 
+## Agent Skills
+
+The primary deliverable of this repository is a set of three reusable
+[Agent Skills](./skills/README.md) that teach AI agents how to build
+their own d6e-connected frontends. Each skill is self-contained — pick
+the ones you need.
+
+| Skill                                                                    | Concern                                                                                                                                                                  |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [`d6e-auth-integration`](./skills/d6e-auth-integration/SKILL.md)         | Instance-brokered OAuth2 login (plus a standalone-client alternative), session cookies, transparent refresh, workspace allow-list.                                       |
+| [`d6e-workspace-api-client`](./skills/d6e-workspace-api-client/SKILL.md) | Bearer vs cookie header matrix, the `caller + accessToken + AbortSignal` wrapper convention in `src/lib/server/d6e-client.ts`, and the idempotent prompt-rule bootstrap. |
+| [`d6e-prompt-driven-ui`](./skills/d6e-prompt-driven-ui/SKILL.md)         | `kind`-discriminated JSON inside fenced code blocks, Zod parse with markdown fallback, XML-tag revision flows, scenario-append activation via the d6e chat UI.           |
+
+### Install in your agent
+
+```bash
+npx skills add https://gitlab.com/cauchye/d6e-ai/d6e-custom-frontend-skills --skill d6e-auth-integration
+npx skills add https://gitlab.com/cauchye/d6e-ai/d6e-custom-frontend-skills --skill d6e-workspace-api-client
+npx skills add https://gitlab.com/cauchye/d6e-ai/d6e-custom-frontend-skills --skill d6e-prompt-driven-ui
+```
+
+Once installed, the agent can guide you end-to-end through wiring an
+OAuth2 login, building the `/api/*` proxy layer, and authoring the
+workspace prompt rule that drives a structured-JSON UI — the same
+architecture the reference app below demonstrates.
+
+The [skills CLI](https://skills.sh) discovers the
+`skills/<name>/SKILL.md` files in this repository directly from the
+GitLab URL above. This repository is hosted on GitLab, so the full URL
+is required — the `owner/repo` shorthand only resolves against
+github.com and does not work here.
+
 ## What the reference app does
 
 The user signs in with their own d6e-auth account, uploads one or more
@@ -208,33 +240,6 @@ or parent folder later.
 - [`docs/workspace-setup.md`](./docs/workspace-setup.md) — `npm run init` deep dive
 - [`docs/llm-output-contract.md`](./docs/llm-output-contract.md) — JSON schema, scenarios, parse fallback
 - [`docs/migration-to-full-integration.md`](./docs/migration-to-full-integration.md) — roadmap toward the full d6e-auth/STF integration (C-case)
-
-## Agent Skills
-
-This repository doubles as a reusable Agent Skill package. Three
-[`skills/`](./skills/README.md) entries teach AI agents (Claude /
-Cursor / etc.) how to build their own d6e-connected frontends using
-this codebase as a reference:
-
-| Skill                                                                    | Concern                                                                                                                                                                  |
-| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| [`d6e-auth-integration`](./skills/d6e-auth-integration/SKILL.md)         | Instance-brokered OAuth2 login (plus a standalone-client alternative), session cookies, transparent refresh, workspace allow-list.                                       |
-| [`d6e-workspace-api-client`](./skills/d6e-workspace-api-client/SKILL.md) | Bearer vs cookie header matrix, the `caller + accessToken + AbortSignal` wrapper convention in `src/lib/server/d6e-client.ts`, and the idempotent prompt-rule bootstrap. |
-| [`d6e-prompt-driven-ui`](./skills/d6e-prompt-driven-ui/SKILL.md)         | `kind`-discriminated JSON inside fenced code blocks, Zod parse with markdown fallback, XML-tag revision flows, scenario-append activation via the d6e chat UI.           |
-
-Install in your agent:
-
-```bash
-npx skills add https://gitlab.com/cauchye/d6e-ai/d6e-custom-frontend-skills --skill d6e-auth-integration
-npx skills add https://gitlab.com/cauchye/d6e-ai/d6e-custom-frontend-skills --skill d6e-workspace-api-client
-npx skills add https://gitlab.com/cauchye/d6e-ai/d6e-custom-frontend-skills --skill d6e-prompt-driven-ui
-```
-
-The [skills CLI](https://skills.sh) discovers the
-`skills/<name>/SKILL.md` files in this repository directly from the
-GitLab URL above. This repository is hosted on GitLab, so the full URL
-is required — the `owner/repo` shorthand only resolves against
-github.com and does not work here.
 
 ## Status & caveats
 
