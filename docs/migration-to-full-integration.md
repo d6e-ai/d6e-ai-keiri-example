@@ -87,10 +87,14 @@ behaviour as a d6e App package.
 
 Concretely:
 
-- Mirror the structure of
-  [`d6e-ai/d6e-app-invoice-jp`](https://github.com/d6e-ai/d6e-app-invoice-jp)
+- Mirror the d6e App package structure
   (`template.yaml` + `stfs/*` + `files/*`) inside this repository so the
-  app can be installed via the d6e App Marketplace.
+  app can be installed into any workspace via the console's
+  **Install from URL** (or listed on the marketplace later through a
+  [d6e-app-registry](https://gitlab.com/cauchye/d6e-ai/d6e-app-registry)
+  merge request) — see the
+  [`d6e-app-skills` examples](https://gitlab.com/cauchye/d6e-ai/d6e-app-skills)
+  (e.g. `examples/accounting-assistant/`) for complete reference layouts.
 - The `template.yaml` should declare:
   - A `receipt-to-journal` workflow that orchestrates OCR → category
     inference → JSON emission.

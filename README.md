@@ -137,14 +137,14 @@ npm install
 
 Copy `.env.example` to `.env` and fill in the values:
 
-| Variable                 | Used by                                            | How to obtain                                                                                               |
-| ------------------------ | -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `D6E_BASE_URL`           | `/api/upload`, `/api/intent`, `/api/chat-sessions` | Base URL of the d6e instance (e.g. `https://your-d6e-instance.example.com`)                                 |
-| `D6E_WORKSPACE_ID`       | all calls                                          | UUID of the d6e workspace this app should operate on                                                        |
-| `D6E_AUTH_URL`           | `/auth/login`, `/auth/callback`, refresh           | Base URL of the d6e-auth instance (e.g. `https://www.d6e.ai`)                                               |
-| `D6E_AUTH_CLIENT_ID`     | server-side OAuth                                  | The d6e **instance's** own OAuth `client_id` (mirror its `D6E_AUTH_CLIENT_ID`); no client secret needed     |
-| `D6E_AUTH_REDIRECT_URI`  | `/auth/login`, `/auth/callback`                    | Callback URL exposed by this app (e.g. `http://localhost:5173/auth/callback`). Allow-listed on the instance |
-| `D6E_INIT_REFRESH_TOKEN` | `npm run init` only                                | Long-lived `auth-refresh` cookie value from a workspace-ADMIN browser session on `D6E_BASE_URL`             |
+| Variable                 | Used by                                            | How to obtain                                                                                                                                          |
+| ------------------------ | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `D6E_BASE_URL`           | `/api/upload`, `/api/intent`, `/api/chat-sessions` | Base URL of the d6e instance (e.g. `https://your-d6e-instance.example.com`) — the origin of the d6e console you already use                            |
+| `D6E_WORKSPACE_ID`       | all calls                                          | Workspace settings page (`{D6E_BASE_URL}/{locale}/workspaces/{id}/settings`) → Integration section copy button, or the UUID in any workspace URL       |
+| `D6E_AUTH_URL`           | `/auth/login`, `/auth/callback`, refresh           | Base URL of the d6e-auth instance (e.g. `https://www.d6e.ai`) — where the console redirects you when signed out                                        |
+| `D6E_AUTH_CLIENT_ID`     | server-side OAuth                                  | Same Integration section on the settings page ("Client ID", visible to workspace **admins** only); it is the instance's own client id, no secret needed |
+| `D6E_AUTH_REDIRECT_URI`  | `/auth/login`, `/auth/callback`                    | Callback URL exposed by this app (e.g. `http://localhost:5173/auth/callback`). Allow-listed on the instance                                            |
+| `D6E_INIT_REFRESH_TOKEN` | `npm run init` only                                | Long-lived `auth-refresh` cookie value from a workspace-ADMIN browser session on `D6E_BASE_URL`                                                        |
 
 > Managed d6e deployments expose the Rust API (`/api/v1/...`) and the
 > SvelteKit frontend (everything else) on the same origin via a reverse

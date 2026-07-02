@@ -1,6 +1,6 @@
 ---
 name: d6e-workspace-api-client
-description: Builds the server-side proxy layer that lets a custom frontend talk to a d6e workspace — file upload, file delete, workflow execution via `execute-by-intent`, chat-session CRUD, workspace prompt rule registration, workspace membership probes, Google Drive sync mirror endpoints, and workspace pending-invitation admin CRUD. Use when adding a new `/api/*` route that talks to d6e, when designing a fetch wrapper that needs to surface timeouts/aborts cleanly, when seeing 401 on `/api/chat-sessions`, when writing a bootstrap script that registers workspace prompt rules idempotently, when wiring a Drive Sync UI (config / roots / sync / materialize / picker), or when building an admin members page that needs to list and cancel pending email invitations.
+description: Builds the server-side proxy layer that lets a custom frontend talk to a d6e workspace — file upload, file delete, workflow execution via `execute-by-intent`, chat-session CRUD, workspace prompt rule registration, workspace membership probes, SaaS API calls via the d6e saas-proxy, Google Drive sync mirror endpoints, and workspace pending-invitation admin CRUD. Use when adding a new `/api/*` route that talks to d6e, when designing a fetch wrapper that needs to surface timeouts/aborts cleanly, when seeing 401 on `/api/chat-sessions` or 402 from `execute-by-intent`, when calling freee/Google/Notion APIs with workspace-stored credentials, when writing a bootstrap script that registers workspace prompt rules idempotently, when wiring a Drive Sync UI (config / roots / sync / materialize / picker), or when building an admin members page that needs to list and cancel pending email invitations.
 ---
 
 # d6e Workspace API Client
@@ -24,6 +24,11 @@ frontend and a d6e workspace. It covers:
   bodies that are easy to miss.
 - The SHA-256-keyed idempotency pattern that `scripts/init-workspace.mjs`
   uses so `npm run init` can be re-run safely.
+- The **SaaS proxy** (`POST /api/v1/saas-proxy`) that lets server code
+  call freee / Google Workspace / Notion / GitHub / Salesforce / Box /
+  MoneyForward / Chatwork / Zendesk APIs with the workspace's stored
+  credential — after a workspace admin connects the provider in the
+  d6e console's settings page (there is no API for that step).
 - Optional integrations newer d6e instances expose:
   - **Google Drive Sync Mirror** under `/api/v1/drive-sync/*` — Bearer
     endpoints whose `workspace_id` is supplied in the body or query
@@ -51,6 +56,8 @@ Apply this skill when the user says:
 - "Trigger a Drive sync from my app" / "Drive 同期ボタンを実装したい"
 - "List and cancel pending workspace invitations" / "保留招待を管理 UI から扱いたい"
 - "Why does `/api/v1/drive-sync/sync` accept the workspace id in the body but not in the URL?"
+- "Call the freee / Google Drive API with the workspace's stored credential" / "SaaS 連携の API をサーバ側から叩きたい"
+- "Why does execute-by-intent return 402?"
 
 ## Core Concepts
 
@@ -83,8 +90,9 @@ cookies and never reaches client-side JavaScript.
 | `POST ${D6E_BASE_URL}/api/workflows/execute-by-intent`             | `Authorization: Bearer <jwt>`                            | Body contains `workspaceId` — set server-side                                                                                                       |
 | `POST ${D6E_BASE_URL}/api/v1/auth/token`                           | none (refresh token in body)                             | Stage 2 / refresh — see auth skill                                                                                                                  |
 | `* ${D6E_BASE_URL}/api/v1/drive-sync/{config,roots,sync,status,…}` | `Authorization: Bearer <jwt>`                            | `workspace_id` is supplied in the **body or query string**, never in the URL path. See [Drive Sync mirror endpoints](#drive-sync-mirror-endpoints). |
+| `POST ${D6E_BASE_URL}/api/v1/saas-proxy`                           | `Authorization: Bearer <jwt>`                            | Proxied SaaS API call using the workspace's stored credential. See [SaaS API calls](#saas-api-calls-through-the-d6e-proxy).                          |
 | `* ${D6E_BASE_URL}/api/chat-sessions[/...]`                        | `Cookie: auth-token=<jwt>`                               | Bearer is rejected; the SvelteKit handler reads `locals.user`                                                                                       |
-| `POST ${D6E_BASE_URL}/api/workspace-prompt-rules`                  | `Cookie: auth-token=<jwt>`                               | Requires admin role on the workspace                                                                                                                |
+| `POST ${D6E_BASE_URL}/api/workspace-prompt-rules`                  | `Cookie: auth-token=<jwt>`                               | Requires admin role on the workspace. `GET` (list) is also admin-only                                                                               |
 | `GET ${D6E_BASE_URL}/api/workspace-prompt-rules?workspaceId=…`     | `Cookie: auth-token=<jwt>`                               | Used for idempotent rule registration                                                                                                               |
 
 The Bearer JWT and the `auth-token` cookie value are the **same**
@@ -502,6 +510,60 @@ Notes specific to Drive Sync proxies:
   `d6e_extract_file_text`). For agent UX, prefer `/read` over
   `/materialize` because it survives Drive-side file moves.
 
+### SaaS API calls through the d6e proxy
+
+> The LLM behind `execute-by-intent` already reaches SaaS APIs via the
+> `d6e_call_external_api` MCP tool, so most prompt-driven flows never
+> need this endpoint directly. Use it when your **own server code**
+> must call a SaaS API (freee, Google Workspace, Notion, …) with the
+> workspace's stored credential.
+
+**Prerequisite — connect the provider in the d6e console first.** SaaS
+credentials are created on the workspace settings page
+(`{D6E_BASE_URL}/{locale}/workspaces/{id}/settings` → SaaS integrations
+section, workspace **admin** role required):
+
+- OAuth providers (freee, Google Workspace, Notion, GitHub, Salesforce,
+  Box, MoneyForward クラウド / 経費) hop through d6e-auth's consent
+  flow, which holds the provider's client secret.
+- Token providers (Chatwork, Zendesk) take API tokens typed into a
+  dialog.
+
+There is no REST API to create these credentials from a custom
+frontend — the console is the only entry point. Plan this as a setup
+step with the workspace admin before writing any proxy code.
+
+Once connected, any workspace **member** JWT can call:
+
+```
+POST ${D6E_BASE_URL}/api/v1/saas-proxy
+Authorization: Bearer <jwt>
+{
+  "workspace_id": "<UUID>",        // pin server-side, as always
+  "provider": "freee",             // catalog id
+  "method": "GET",                 // GET/POST/PUT/PATCH/DELETE
+  "path": "/api/1/companies",      // appended to the provider's base URL
+  "headers": { ... },              // optional; auth headers are ignored
+  "body": { ... },                 // optional JSON body
+  "file_id": "<storage UUID>"      // optional: send a workspace file as the body
+}
+```
+
+Response: `{ status, headers, body }` mirroring the upstream reply
+(response bodies capped at 10 MB; use
+`POST /api/v1/saas-proxy-download` for binaries). Notes:
+
+- The proxy injects the real `Authorization` (or provider-specific
+  token header) from the encrypted `saas_credential` row and refreshes
+  expired OAuth tokens automatically. Caller-supplied `authorization`,
+  `cookie`, `host`, and `x-chatworktoken` headers are discarded.
+- `404 No credential found for provider=…` means the provider has not
+  been connected in the console for this workspace — not a bug in your
+  code.
+- `file_id` alone sends the file's bytes as the raw body; `file_id` +
+  `body` builds a multipart/related request (JSON metadata + binary),
+  which is what Google Drive uploads want.
+
 ### Workspace invitation admin endpoints
 
 > Available on d6e instances that have the pending-invitation feature
@@ -589,10 +651,30 @@ endpoint authenticates via `locals.user` (cookie-based). Switch to
 
 ### Empty 400 body from `/api/v1/workspaces/{id}/files/multipart`
 
-`workspaceId` in the URL is not a UUID, or the multipart body is
-missing the `metadata` field. Verify the route handler is calling
-`getD6eWorkspaceId('/api/upload')` (which validates the UUID format)
-and appending both `file` and `metadata` parts.
+The d6e side returns a bare 400 when the multipart body has no `file`
+part (or the part has no filename), or when the request carries no
+usable workspace id — the handler takes it from the `X-Workspace-ID`
+header, not the URL path. Verify the route handler calls
+`getD6eWorkspaceId('/api/upload')` (which validates the UUID format),
+sets the `X-Workspace-ID` header, and appends the `file` part. The
+`metadata` part is optional. A `413` means the file exceeded the
+server-side 1 GB cap (this app additionally enforces 10 MB client-side).
+
+### `executeByIntent` returns 402 with "AI features are temporarily disabled"
+
+Not an auth problem. The d6e instance soft-gates LLM usage per
+workspace based on billing entitlement (past-due subscription,
+exhausted credits, usage cap). The response body's `message` explains
+the reason. Surface it to the user verbatim and point the workspace
+admin at the instance's billing page — retrying will not help until
+the entitlement recovers.
+
+### `POST /api/v1/saas-proxy` returns 404 "No credential found"
+
+The target provider has never been connected for this workspace. A
+workspace admin must connect it on the d6e console's workspace
+settings page (SaaS integrations section) first — there is no API to
+do this from the custom frontend. See [SaaS API calls](#saas-api-calls-through-the-d6e-proxy).
 
 ### `D6eClientError(status=504, timedOut=true)` on every `executeByIntent`
 

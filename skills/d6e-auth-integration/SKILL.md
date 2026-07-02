@@ -219,6 +219,24 @@ a developer's identity.
 
 A minimal SvelteKit implementation has four files plus a hook.
 
+### Step 0: Collect the values from the d6e console
+
+Every value except the redirect URI can be read off the d6e instance
+itself — you do not need d6e-auth admin access:
+
+| Variable | Where to get it |
+| --- | --- |
+| `D6E_BASE_URL` | The origin of the d6e console you already use, e.g. `https://cauchye.d6e.ai` |
+| `D6E_WORKSPACE_ID` | Workspace settings page (`{D6E_BASE_URL}/{locale}/workspaces/{id}/settings`) → **Integration** section has a copy button. It is also the UUID in every workspace URL |
+| `D6E_AUTH_CLIENT_ID` | Same **Integration** section on the settings page ("Client ID" field). Shown only to users with the workspace **admin** role — ask a workspace admin to copy it for you if the section is missing |
+| `D6E_AUTH_URL` | The login page the console redirects you to when signed out (typically `https://www.d6e.ai`). The settings page's "account linking" button also points at it |
+| `D6E_AUTH_REDIRECT_URI` | You choose it: `<your app origin>/auth/callback`. It must then be allow-listed (see below) |
+
+The Integration section renders only for workspace admins
+(`userRole === 'admin'` in the settings loader), and only when the
+instance has `D6E_AUTH_CLIENT_ID` configured. A regular member can
+still read the workspace UUID from the URL bar.
+
 ### Step 1: Environment
 
 ```dotenv
@@ -236,6 +254,13 @@ frontend needs no client secret. The instance operator must add
 `ALLOWED_REDIRECT_URIS` env var, or the code exchange fails with
 `invalid_redirect_uri`. (The standalone-client alternative above instead
 uses your own `client_id` + `D6E_AUTH_CLIENT_SECRET`.)
+
+Allow-listing the redirect URI is the only step that requires someone
+other than a workspace developer: the d6e-auth side is edited by a
+d6e-auth admin, the `ALLOWED_REDIRECT_URIS` env var by whoever operates
+the instance deployment. Request both **before** you start testing
+logins — every other step in this skill works with plain workspace
+access.
 
 ### Step 2: `/auth/login`
 
@@ -393,7 +418,7 @@ member" (route to `/auth/no-access`) from "couldn't ask" (route to
 
 ## Implementation Checklist
 
-- [ ] All five env vars are present and validated on startup (see `src/lib/server/env.ts`); `D6E_AUTH_CLIENT_ID` is the instance's own client id and no client secret is required.
+- [ ] All five env vars are present and validated on startup (see `src/lib/server/env.ts`); `D6E_AUTH_CLIENT_ID` is the instance's own client id and no client secret is required. Client ID and Workspace ID come from the workspace settings page's Integration section (admin-only view — see Quick Start Step 0).
 - [ ] `D6E_AUTH_REDIRECT_URI` is allow-listed on the instance — in BOTH its `registered_client.redirectUris` on d6e-auth and its `ALLOWED_REDIRECT_URIS` env var.
 - [ ] `/auth/callback` exchanges the code at the d6e instance (`exchangeAuthorizationCode`) and stores the returned pair directly.
 - [ ] All four cookies set `httpOnly`, `sameSite: 'lax'`, `secure: !dev`, `path: '/'`.
@@ -422,6 +447,42 @@ member" (route to `/auth/no-access`) from "couldn't ask" (route to
 - Vercel deploys map env vars 1:1 with `.env`. Don't forget to set `D6E_AUTH_REDIRECT_URI` per environment (preview deploys need their own redirect URIs registered on d6e-auth).
 
 ## Troubleshooting
+
+### `invalid_redirect_uri` (400) from the token exchange
+
+The instance checks the `redirect_uri` you POST against its own
+allow-list before relaying the code: the primary
+`{ORIGIN}/auth/callback` plus every entry in its
+`ALLOWED_REDIRECT_URIS` env var (comma-separated; trailing slashes are
+ignored). Your app's callback is not on that list. Ask the instance
+operator to add it — and remember each environment (localhost, preview
+deploy, production) needs its own entry.
+
+### `token_exchange_failed` (400/401) from the token exchange
+
+The instance relays the exchange to d6e-auth and deliberately returns
+this generic error to the client while logging the real reason
+server-side. Common causes, in order of likelihood:
+
+- The authorization code expired — codes live **5 minutes** and are
+  single-use. A page reload on `/auth/callback` re-sends a consumed
+  code.
+- The `redirect_uri` sent in the exchange differs from the one used at
+  `/auth/login` (both must be the exact same string, also registered in
+  the d6e-auth client's `redirectUris`).
+- The refresh token was already rotated by a parallel request (see the
+  in-flight deduplication section).
+
+If you can read the instance's logs, look for
+`Auth service returned error (status=...)`.
+
+### Login form shows "email domain not allowed" (403)
+
+The instance's registered client on d6e-auth has
+`allowedEmailDomains` configured, and the signing-in user's email
+domain is not on it. This is enforced by d6e-auth at the login form,
+before any code is issued. A d6e-auth admin must extend the client's
+domain list (or the user must use an allowed account).
 
 ### Login succeeds but every API call returns 401
 
