@@ -501,7 +501,7 @@ own allow-list before relaying the code: the primary
 ignored). Your app's callback is not on that list. Ask the instance
 operator to add it — and remember each deployed environment (preview
 deploy, production) needs its own entry. Loopback callbacks skip this
-check on instances running d6e api v0.21+; on older instances,
+check on instances running d6e api v0.20.1+; on older instances,
 localhost ports still need explicit `ALLOWED_REDIRECT_URIS` entries.
 
 ### `token_exchange_failed` (400/401) from the token exchange
