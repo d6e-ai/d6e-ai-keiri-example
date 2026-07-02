@@ -4,11 +4,11 @@
 prompt rule on a running d6e instance. Run it once per workspace before
 you use the AI Journal page.
 
-## Enabling end-user login (d6e instance operator)
+## Enabling end-user login (one-time allow-listing)
 
-Before anyone can log into this app, the operator of the **d6e instance**
-must allow this app's OAuth callback URL. Login is *instance-brokered*:
-`/auth/callback` exchanges the authorization code at the instance's own
+Before anyone can log into this app, this app's OAuth callback URL must
+be allow-listed. Login is *instance-brokered*: `/auth/callback`
+exchanges the authorization code at the instance's own
 `${D6E_BASE_URL}/api/v1/auth/token`, which relays it to d6e-auth using
 the instance's client credentials. Two allow-lists must therefore include
 every environment's callback URL:
@@ -16,13 +16,20 @@ every environment's callback URL:
 1. **d6e-auth `registered_client.redirectUris`** — add the callback URL
    (e.g. `http://localhost:5173/auth/callback` for dev and
    `https://<deploy>/auth/callback` for prod) to the redirect URIs of the
-   instance's own registered client on d6e-auth.
+   instance's own registered client on d6e-auth. This is self-service
+   for anyone with the **franchise owner/admin** role on the franchise
+   that registered the instance: open
+   `${D6E_AUTH_URL}/{locale}/account/franchise` (e.g.
+   `https://www.d6e.ai/ja-JP/account/franchise`), find the instance card
+   under *d6e Instance Connection*, and add the URL under **Redirect
+   URIs**. No d6e-auth platform admin is needed.
 2. **The instance's `ALLOWED_REDIRECT_URIS`** — set this env var on the
    d6e instance to the same comma-separated list. The instance validates
    the `redirect_uri` of the code exchange against the ORIGIN-derived
    callback plus this list. Docker Compose already forwards it to the
    `api` service via `env_file: .env`, so adding it to the instance's
-   `.env` is enough — no Compose edit required.
+   `.env` is enough — no Compose edit required. This one is edited by
+   whoever operates the instance deployment.
 
 Then set this app's `D6E_AUTH_CLIENT_ID` to the instance's own client id
 (no client secret is needed). Frontends that cannot change the instance's

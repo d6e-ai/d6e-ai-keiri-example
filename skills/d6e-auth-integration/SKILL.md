@@ -74,10 +74,13 @@ sequenceDiagram
 Because the exchange happens at the instance, the returned pair is
 already signed for the audience the instance's Bearer endpoints accept,
 so it lands straight in cookies. The frontend sends **no client
-secret** — the instance owns those credentials. The instance only
-accepts redirect URIs on its allow-list (the ORIGIN-derived callback
-plus `ALLOWED_REDIRECT_URIS`), so the operator must add this app's
-callback there before the first login.
+secret** — the instance owns those credentials. Two allow-lists gate the
+flow: d6e-auth checks the authorize request's `redirect_uri` against the
+instance's `registered_client.redirectUris` (editable self-service in
+the d6e-auth franchise portal), and the instance's token relay checks it
+against the ORIGIN-derived callback plus `ALLOWED_REDIRECT_URIS`. Both
+must contain this app's callback before the first login — see
+"Registering the redirect URI" under Step 1.
 
 ### Alternative: standalone client (when you don't operate the instance)
 
@@ -86,9 +89,13 @@ you are a third party building against a managed instance you do not
 operate — register your **own** `registered_client` on d6e-auth instead
 and use the original two-stage exchange:
 
-1. The d6e-auth admin issues you a `client_id` + `client_secret` with
-   your callback URL in its `redirect_uris`. Set `D6E_AUTH_CLIENT_ID` to
-   that id and add `D6E_AUTH_CLIENT_SECRET`.
+1. Obtain your own `client_id` + `client_secret` with your callback URL
+   in its `redirect_uris`. A franchise owner/admin can self-serve this
+   from the d6e-auth franchise portal
+   (`${D6E_AUTH_URL}/{locale}/account/franchise`): register a client
+   under *d6e Instance Connection* and manage its **Redirect URIs** on
+   the same card. Without a franchise role, ask a d6e-auth operator.
+   Set `D6E_AUTH_CLIENT_ID` to that id and add `D6E_AUTH_CLIENT_SECRET`.
 2. `exchangeAuthorizationCode` POSTs `authorization_code` (with your
    `client_id` / `client_secret`) to `${D6E_AUTH_URL}/api/v1/auth/token`.
    That access token carries `iss=d6e-auth` and is rejected by the
@@ -248,19 +255,29 @@ D6E_WORKSPACE_ID=<UUID of the workspace this app is bound to>
 ```
 
 Set `D6E_AUTH_CLIENT_ID` to the **instance's** own client id; the
-frontend needs no client secret. The instance operator must add
-`D6E_AUTH_REDIRECT_URI` to BOTH the instance's
-`registered_client.redirectUris` on d6e-auth and its
-`ALLOWED_REDIRECT_URIS` env var, or the code exchange fails with
-`invalid_redirect_uri`. (The standalone-client alternative above instead
-uses your own `client_id` + `D6E_AUTH_CLIENT_SECRET`.)
+frontend needs no client secret. (The standalone-client alternative
+above instead uses your own `client_id` + `D6E_AUTH_CLIENT_SECRET`.)
 
-Allow-listing the redirect URI is the only step that requires someone
-other than a workspace developer: the d6e-auth side is edited by a
-d6e-auth admin, the `ALLOWED_REDIRECT_URIS` env var by whoever operates
-the instance deployment. Request both **before** you start testing
-logins — every other step in this skill works with plain workspace
-access.
+#### Registering the redirect URI
+
+`D6E_AUTH_REDIRECT_URI` must be allow-listed in BOTH places below, or
+the flow fails (see Troubleshooting for the distinct error each list
+produces):
+
+| Allow-list | Checked when | Who can edit |
+| --- | --- | --- |
+| `registered_client.redirectUris` on d6e-auth | At the d6e-auth login form, before any code is issued | **Self-service for franchise owners/admins**: open `${D6E_AUTH_URL}/{locale}/account/franchise`, find the instance card under *d6e Instance Connection*, and add the URL under **Redirect URIs**. d6e-auth platform admins can also edit any instance under `/admin/instances` |
+| `ALLOWED_REDIRECT_URIS` env var on the d6e instance | At the instance's token relay during the code exchange | Whoever operates the instance deployment (comma-separated env var) |
+
+Allow-listing is still the only step a plain workspace developer cannot
+do alone, but it no longer requires a d6e-auth platform admin: the
+d6e-auth half is a UI edit for whoever holds the franchise owner/admin
+role (typically the organization that registered the instance), and the
+env var is set by the instance operator. Request both **before** you
+start testing logins — every other step in this skill works with plain
+workspace access. Each environment (localhost, preview deploy,
+production) needs its own entry in both lists, matching your callback
+URL character-for-character.
 
 ### Step 2: `/auth/login`
 
@@ -419,7 +436,7 @@ member" (route to `/auth/no-access`) from "couldn't ask" (route to
 ## Implementation Checklist
 
 - [ ] All five env vars are present and validated on startup (see `src/lib/server/env.ts`); `D6E_AUTH_CLIENT_ID` is the instance's own client id and no client secret is required. Client ID and Workspace ID come from the workspace settings page's Integration section (admin-only view — see Quick Start Step 0).
-- [ ] `D6E_AUTH_REDIRECT_URI` is allow-listed on the instance — in BOTH its `registered_client.redirectUris` on d6e-auth and its `ALLOWED_REDIRECT_URIS` env var.
+- [ ] `D6E_AUTH_REDIRECT_URI` is allow-listed on the instance — in BOTH its `registered_client.redirectUris` on d6e-auth (self-service for franchise owners/admins at `${D6E_AUTH_URL}/{locale}/account/franchise`) and its `ALLOWED_REDIRECT_URIS` env var.
 - [ ] `/auth/callback` exchanges the code at the d6e instance (`exchangeAuthorizationCode`) and stores the returned pair directly.
 - [ ] All four cookies set `httpOnly`, `sameSite: 'lax'`, `secure: !dev`, `path: '/'`.
 - [ ] `loadSession()` refreshes via `${D6E_BASE_URL}/api/v1/auth/token` (the d6e instance), not d6e-auth.
@@ -444,9 +461,21 @@ member" (route to `/auth/no-access`) from "couldn't ask" (route to
 
 - Treat `D6E_INIT_REFRESH_TOKEN` as a secret with the same sensitivity as a database password. Rotate it whenever a developer with admin access leaves.
 - When `D6E_AUTH_URL` is unreachable during logout, the user is still locally signed out (cookies clear synchronously); the d6e-auth-side cleanup waits for the upstream to recover.
-- Vercel deploys map env vars 1:1 with `.env`. Don't forget to set `D6E_AUTH_REDIRECT_URI` per environment (preview deploys need their own redirect URIs registered on d6e-auth).
+- Vercel deploys map env vars 1:1 with `.env`. Don't forget to set `D6E_AUTH_REDIRECT_URI` per environment (preview deploys need their own redirect URIs registered on d6e-auth — a franchise owner/admin can add them in the franchise portal).
 
 ## Troubleshooting
+
+### Login form shows "Invalid client configuration" (400)
+
+d6e-auth rejected the authorize request because the `redirect_uri` in
+the login URL is not in the instance's
+`registered_client.redirectUris` — this happens **before any code is
+issued**, so the browser never returns to your app. A franchise
+owner/admin fixes it self-service: open
+`${D6E_AUTH_URL}/{locale}/account/franchise`, pick the instance card
+under *d6e Instance Connection*, and add your exact callback URL under
+**Redirect URIs** (matching is character-for-character; no trailing
+slash normalization).
 
 ### `invalid_redirect_uri` (400) from the token exchange
 

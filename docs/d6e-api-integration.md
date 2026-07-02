@@ -192,7 +192,9 @@ No `client_id` / `client_secret` is sent by this app: the d6e instance
 injects its own when it forwards the grant to d6e-auth. The `redirect_uri`
 must be present (d6e-auth requires it for the authorization_code grant)
 and allow-listed on the instance — both in the instance's
-`registered_client.redirectUris` on d6e-auth and in the instance's
+`registered_client.redirectUris` on d6e-auth (self-service for franchise
+owners/admins in the d6e-auth franchise portal — see
+[`workspace-setup.md`](./workspace-setup.md)) and in the instance's
 `ALLOWED_REDIRECT_URIS` env var.
 
 The d6e instance returns a token pair signed for its own audience, and
