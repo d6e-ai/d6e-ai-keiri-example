@@ -56,11 +56,11 @@ overwritten the next time someone re-runs the script.
 
 `npm run init` reads `.env` automatically via Node's `--env-file` flag.
 
-| Variable                 | Where to find it                                                                                |
-| ------------------------ | ----------------------------------------------------------------------------------------------- |
-| `D6E_BASE_URL`           | Base URL of the d6e instance (e.g. `https://your-d6e-instance.example.com`)                     |
-| `D6E_WORKSPACE_ID`       | UUID of the target workspace (visible in the d6e frontend URL when you're inside one)           |
-| `D6E_INIT_REFRESH_TOKEN` | Value of the `auth-refresh` cookie for a logged-in workspace-ADMIN session on `D6E_BASE_URL`    |
+| Variable                 | Where to find it                                                                                                                                  |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `D6E_BASE_URL`           | Base URL of the d6e instance (e.g. `https://your-d6e-instance.example.com`)                                                                       |
+| `D6E_WORKSPACE_ID`       | UUID of the target workspace — copy button in the workspace settings page's Integration section (admin view), or read it off any workspace URL |
+| `D6E_INIT_REFRESH_TOKEN` | Value of the `auth-refresh` cookie for a logged-in workspace-ADMIN session on `D6E_BASE_URL`                                                      |
 
 `D6E_INIT_REFRESH_TOKEN` is intentionally separate from the regular
 `auth-refresh` cookie this app issues to end users. The script can

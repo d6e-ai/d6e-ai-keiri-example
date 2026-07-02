@@ -256,6 +256,14 @@ This keeps the deploy-time prompt fixed and human-reviewed while
 deferring the workspace-specific binding to a one-time interactive
 dance the user can rerun whenever the bindings need to change.
 
+**Prerequisite**: any scenario that calls a SaaS API through
+`d6e_call_external_api` (freee, Google Drive, …) only works after a
+workspace admin has connected that provider on the d6e console's
+workspace settings page (SaaS integrations section). The connection
+cannot be created from the custom frontend or from the prompt — if
+`d6e_list_saas_credentials` comes back empty, the activation flow must
+stop and tell the user to connect the provider in the console first.
+
 ## Quick Start
 
 A minimal `kind: "journal"` contract end-to-end.
@@ -689,6 +697,17 @@ before calling `d6e_update_workspace_prompt_rule`.
 Someone hand-edited the rule in the d6e admin UI. The SHA-256 hashes
 no longer match, so the script POSTs a fresh copy. Resolve by
 deleting the orphan via the admin UI, then re-run `npm run init`.
+
+### Registration scenario reports "provider not connected" (or `d6e_call_external_api` 404s)
+
+The workspace has no stored credential for the SaaS provider the
+scenario needs. This is a console-side setup step, not a prompt bug: a
+workspace admin opens the d6e console's workspace settings page → SaaS
+integrations, and connects the provider (OAuth consent for freee /
+Google Workspace etc., API token dialog for Chatwork / Zendesk). Then
+rerun the scenario. The prompt should treat an empty
+`d6e_list_saas_credentials` result as a hard stop with exactly this
+instruction.
 
 ## Related Skills
 
