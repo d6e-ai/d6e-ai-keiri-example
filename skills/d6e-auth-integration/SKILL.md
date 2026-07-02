@@ -78,8 +78,13 @@ secret** — the instance owns those credentials. Two allow-lists gate the
 flow: d6e-auth checks the authorize request's `redirect_uri` against the
 instance's `registered_client.redirectUris` (editable self-service in
 the d6e-auth franchise portal), and the instance's token relay checks it
-against the ORIGIN-derived callback plus `ALLOWED_REDIRECT_URIS`. Both
-must contain this app's callback before the first login — see
+against the ORIGIN-derived callback plus `ALLOWED_REDIRECT_URIS`.
+
+**Loopback callbacks skip both allow-lists.** A `redirect_uri` on
+`localhost`, `127.0.0.0/8`, or `[::1]` — any port, any path — is always
+accepted by d6e-auth and by the instance's token relay, so local
+development (`npm run dev` on any port) needs no registration at all.
+Only deployed (non-loopback) callback URLs must be registered — see
 "Registering the redirect URI" under Step 1.
 
 ### Alternative: standalone client (when you don't operate the instance)
@@ -107,8 +112,10 @@ and use the original two-stage exchange:
 Everything else in this skill (cookies, refresh, allow-list, logout) is
 identical. The trade-off: one extra exchange on login and a client
 secret to protect, in return for needing no change on the instance side.
-Prefer the instance-brokered flow above whenever you (or your operator)
-can edit the instance's `ALLOWED_REDIRECT_URIS`.
+Prefer the instance-brokered flow above for local development (loopback
+callbacks need no registration anywhere) and whenever you (or your
+operator) can edit the instance's `ALLOWED_REDIRECT_URIS` for deployed
+URLs.
 
 ### Cookie layout
 
@@ -237,7 +244,7 @@ itself — you do not need d6e-auth admin access:
 | `D6E_WORKSPACE_ID` | Workspace settings page (`{D6E_BASE_URL}/{locale}/workspaces/{id}/settings`) → **Integration** section has a copy button. It is also the UUID in every workspace URL |
 | `D6E_AUTH_CLIENT_ID` | Same **Integration** section on the settings page ("Client ID" field). Shown only to users with the workspace **admin** role — ask a workspace admin to copy it for you if the section is missing |
 | `D6E_AUTH_URL` | The login page the console redirects you to when signed out (typically `https://www.d6e.ai`). The settings page's "account linking" button also points at it |
-| `D6E_AUTH_REDIRECT_URI` | You choose it: `<your app origin>/auth/callback`. It must then be allow-listed (see below) |
+| `D6E_AUTH_REDIRECT_URI` | You choose it: `<your app origin>/auth/callback`. Loopback origins (localhost, any port) work as-is; deployed origins must be allow-listed (see below) |
 
 The Integration section renders only for workspace admins
 (`userRole === 'admin'` in the settings loader), and only when the
@@ -260,9 +267,14 @@ above instead uses your own `client_id` + `D6E_AUTH_CLIENT_SECRET`.)
 
 #### Registering the redirect URI
 
-`D6E_AUTH_REDIRECT_URI` must be allow-listed in BOTH places below, or
-the flow fails (see Troubleshooting for the distinct error each list
-produces):
+**Loopback callbacks need no registration.** If
+`D6E_AUTH_REDIRECT_URI` points at `localhost`, `127.0.0.0/8`, or
+`[::1]` — any port, any path — both validation layers accept it
+automatically, so the local-dev value above works out of the box.
+
+A **deployed** (non-loopback) `D6E_AUTH_REDIRECT_URI` must be
+allow-listed in BOTH places below, or the flow fails (see
+Troubleshooting for the distinct error each list produces):
 
 | Allow-list | Checked when | Who can edit |
 | --- | --- | --- |
@@ -270,12 +282,13 @@ produces):
 | `ALLOWED_REDIRECT_URIS` env var on the d6e instance | At the instance's token relay during the code exchange | Whoever operates the instance deployment (comma-separated env var) |
 
 Allow-listing is still the only step a plain workspace developer cannot
-do alone, but it no longer requires a d6e-auth platform admin: the
-d6e-auth half is a UI edit for whoever holds the franchise owner/admin
-role (typically the organization that registered the instance), and the
-env var is set by the instance operator. Request both **before** you
-start testing logins — every other step in this skill works with plain
-workspace access. Each environment (localhost, preview deploy,
+do alone, but it now only applies to deployed URLs and no longer
+requires a d6e-auth platform admin: the d6e-auth half is a UI edit for
+whoever holds the franchise owner/admin role (typically the
+organization that registered the instance), and the env var is set by
+the instance operator. Request both **before** you deploy — local
+development and every other step in this skill work with plain
+workspace access. Each deployed environment (preview deploy,
 production) needs its own entry in both lists, matching your callback
 URL character-for-character.
 
@@ -436,7 +449,7 @@ member" (route to `/auth/no-access`) from "couldn't ask" (route to
 ## Implementation Checklist
 
 - [ ] All five env vars are present and validated on startup (see `src/lib/server/env.ts`); `D6E_AUTH_CLIENT_ID` is the instance's own client id and no client secret is required. Client ID and Workspace ID come from the workspace settings page's Integration section (admin-only view — see Quick Start Step 0).
-- [ ] `D6E_AUTH_REDIRECT_URI` is allow-listed on the instance — in BOTH its `registered_client.redirectUris` on d6e-auth (self-service for franchise owners/admins at `${D6E_AUTH_URL}/{locale}/account/franchise`) and its `ALLOWED_REDIRECT_URIS` env var.
+- [ ] A deployed (non-loopback) `D6E_AUTH_REDIRECT_URI` is allow-listed on the instance — in BOTH its `registered_client.redirectUris` on d6e-auth (self-service for franchise owners/admins at `${D6E_AUTH_URL}/{locale}/account/franchise`) and its `ALLOWED_REDIRECT_URIS` env var. Loopback callbacks (localhost / 127.0.0.0/8 / [::1], any port) skip both lists and need no registration.
 - [ ] `/auth/callback` exchanges the code at the d6e instance (`exchangeAuthorizationCode`) and stores the returned pair directly.
 - [ ] All four cookies set `httpOnly`, `sameSite: 'lax'`, `secure: !dev`, `path: '/'`.
 - [ ] `loadSession()` refreshes via `${D6E_BASE_URL}/api/v1/auth/token` (the d6e instance), not d6e-auth.
@@ -468,10 +481,12 @@ member" (route to `/auth/no-access`) from "couldn't ask" (route to
 ### Login form shows "Invalid client configuration" (400)
 
 d6e-auth rejected the authorize request because the `redirect_uri` in
-the login URL is not in the instance's
+the login URL is a non-loopback URL that is not in the instance's
 `registered_client.redirectUris` — this happens **before any code is
-issued**, so the browser never returns to your app. A franchise
-owner/admin fixes it self-service: open
+issued**, so the browser never returns to your app. (Loopback callbacks
+are always accepted; if you see this on localhost, check the URL is
+really loopback — e.g. `app.localhost` or a LAN IP does not count.) A
+franchise owner/admin fixes it self-service: open
 `${D6E_AUTH_URL}/{locale}/account/franchise`, pick the instance card
 under *d6e Instance Connection*, and add your exact callback URL under
 **Redirect URIs** (matching is character-for-character; no trailing
@@ -479,13 +494,15 @@ slash normalization).
 
 ### `invalid_redirect_uri` (400) from the token exchange
 
-The instance checks the `redirect_uri` you POST against its own
-allow-list before relaying the code: the primary
+The instance checks a non-loopback `redirect_uri` you POST against its
+own allow-list before relaying the code: the primary
 `{ORIGIN}/auth/callback` plus every entry in its
 `ALLOWED_REDIRECT_URIS` env var (comma-separated; trailing slashes are
 ignored). Your app's callback is not on that list. Ask the instance
-operator to add it — and remember each environment (localhost, preview
-deploy, production) needs its own entry.
+operator to add it — and remember each deployed environment (preview
+deploy, production) needs its own entry. Loopback callbacks skip this
+check on instances running d6e api v0.21+; on older instances,
+localhost ports still need explicit `ALLOWED_REDIRECT_URIS` entries.
 
 ### `token_exchange_failed` (400/401) from the token exchange
 
