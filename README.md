@@ -143,7 +143,7 @@ Copy `.env.example` to `.env` and fill in the values:
 | `D6E_WORKSPACE_ID`       | all calls                                          | Workspace settings page (`{D6E_BASE_URL}/{locale}/workspaces/{id}/settings`) → Integration section copy button, or the UUID in any workspace URL       |
 | `D6E_AUTH_URL`           | `/auth/login`, `/auth/callback`, refresh           | Base URL of the d6e-auth instance (e.g. `https://www.d6e.ai`) — where the console redirects you when signed out                                        |
 | `D6E_AUTH_CLIENT_ID`     | server-side OAuth                                  | Same Integration section on the settings page ("Client ID", visible to workspace **admins** only); it is the instance's own client id, no secret needed |
-| `D6E_AUTH_REDIRECT_URI`  | `/auth/login`, `/auth/callback`                    | Callback URL exposed by this app (e.g. `http://localhost:5173/auth/callback`). Allow-listed on the instance                                            |
+| `D6E_AUTH_REDIRECT_URI`  | `/auth/login`, `/auth/callback`                    | Callback URL exposed by this app (e.g. `http://localhost:5173/auth/callback`). Must be allow-listed twice: on d6e-auth (franchise owner/admin: `{D6E_AUTH_URL}/{locale}/account/franchise` → instance card → Redirect URIs) and in the instance's `ALLOWED_REDIRECT_URIS` env var — see [docs/workspace-setup.md](./docs/workspace-setup.md) |
 | `D6E_INIT_REFRESH_TOKEN` | `npm run init` only                                | Long-lived `auth-refresh` cookie value from a workspace-ADMIN browser session on `D6E_BASE_URL`                                                        |
 
 > Managed d6e deployments expose the Rust API (`/api/v1/...`) and the
