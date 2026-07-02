@@ -34,7 +34,7 @@ must therefore include every deployed environment's callback URL:
    `api` service via `env_file: .env`, so adding it to the instance's
    `.env` is enough — no Compose edit required. This one is edited by
    whoever operates the instance deployment. (Loopback URIs skip this
-   check on d6e api v0.21+; older instances still require explicit
+   check on d6e api v0.20.1+; older instances still require explicit
    localhost entries here.)
 
 Then set this app's `D6E_AUTH_CLIENT_ID` to the instance's own client id
