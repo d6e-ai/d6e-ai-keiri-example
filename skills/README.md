@@ -88,6 +88,12 @@ play.
 | Prompts, schemas, parsers, render  | `scripts/prompts/ai-keiri-prompt.md`, `src/lib/journal-schema.ts`, `src/lib/parse-journal.ts`, `src/lib/components/{journal,registration}-result.svelte` | `d6e-prompt-driven-ui`     |
 | Scenario-append activation prompts | `scripts/prompts/freee-registration-prompt.md` (freee + Drive upload), `scripts/prompts/drive-mirror-followup-prompt.md` (Drive mirror lookup)           | `d6e-prompt-driven-ui`     |
 
+For the conceptual big picture — what a custom frontend *is* relative
+to the d6e instance and the central account site, and how it differs
+from a Plugin — start with
+[`docs/frontend-and-instance.md`](../docs/frontend-and-instance.md)
+(日本語版: [`frontend-and-instance.ja.md`](../docs/frontend-and-instance.ja.md)).
+
 For deeper architectural background see the in-repo docs:
 [`docs/architecture.md`](../docs/architecture.md),
 [`docs/d6e-api-integration.md`](../docs/d6e-api-integration.md),
