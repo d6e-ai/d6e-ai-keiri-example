@@ -83,17 +83,17 @@ For both paths, the AI Journal page becomes "save journal" instead of
 ## Phase 4 — Dedicated STFs / workflows
 
 **Goal:** stop relying purely on a prompt rule and ship the journal
-behaviour as a d6e App package.
+behaviour as a d6e Plugin package.
 
 Concretely:
 
-- Mirror the d6e App package structure
+- Mirror the d6e Plugin package structure
   (`template.yaml` + `stfs/*` + `files/*`) inside this repository so the
   app can be installed into any workspace via the console's
   **Install from URL** (or listed on the marketplace later through a
-  [d6e-app-registry](https://gitlab.com/cauchye/d6e-ai/d6e-app-registry)
+  [d6e-plugin-registry](https://gitlab.com/cauchye/d6e-ai/d6e-plugin-registry)
   merge request) — see the
-  [`d6e-app-skills` examples](https://gitlab.com/cauchye/d6e-ai/d6e-app-skills)
+  [`d6e-plugin-skills` examples](https://gitlab.com/cauchye/d6e-ai/d6e-plugin-skills)
   (e.g. `examples/accounting-assistant/`) for complete reference layouts.
 - The `template.yaml` should declare:
   - A `receipt-to-journal` workflow that orchestrates OCR → category
@@ -129,7 +129,7 @@ Nice-to-haves once the above are in place:
 - Slack / LINE notifications when a new task lands in `pending_approval`
   — d6e already has SNS bot support, so this can piggy-back on the same
   `execute-by-intent` infrastructure.
-- Configurable accounting code mapping via a YAML in the d6e App package
+- Configurable accounting code mapping via a YAML in the d6e Plugin package
   rather than free-text prompt guidance.
 
 ## Anti-goals
