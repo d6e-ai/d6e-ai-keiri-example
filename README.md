@@ -236,6 +236,7 @@ or parent folder later.
 
 ## Documentation
 
+- [`docs/frontend-and-instance.md`](./docs/frontend-and-instance.md) — how a custom frontend, the d6e instance, and www.d6e.ai relate (start here / 日本語版: [`frontend-and-instance.ja.md`](./docs/frontend-and-instance.ja.md))
 - [`docs/architecture.md`](./docs/architecture.md) — request flow and directory layout
 - [`docs/d6e-api-integration.md`](./docs/d6e-api-integration.md) — exact request/response payloads
 - [`docs/workspace-setup.md`](./docs/workspace-setup.md) — `npm run init` deep dive
