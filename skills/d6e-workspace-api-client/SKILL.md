@@ -101,6 +101,16 @@ both share the Bearer transport but enforce different authorisation
 gates (workspace-member for Drive Sync, workspace-admin for
 invitations).
 
+For local development and smoke tests (curl, scripts, or an AI harness
+calling `${D6E_BASE_URL}` directly), a long-lived **API key**
+(`d6e_...`, created in the d6e console: avatar in the header → API
+Keys) works everywhere the table says `Authorization: Bearer <jwt>` —
+it carries the same user identity without the ~1 h JWT expiry. The
+cookie-transport routes (`/api/chat-sessions`,
+`/api/workspace-prompt-rules`) still need the real session cookie. See
+[local-ai-development.md](https://gitlab.com/cauchye/d6e-ai/d6e-plugin-skills/-/blob/main/docs/local-ai-development.md)
+for the full local-harness workflow.
+
 ### Fetch wrapper conventions
 
 Every helper in [`src/lib/server/d6e-client.ts`](../../src/lib/server/d6e-client.ts)
