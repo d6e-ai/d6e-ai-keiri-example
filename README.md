@@ -26,7 +26,7 @@ the ones you need.
 | Skill                                                                    | Concern                                                                                                                                                                  |
 | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | [`d6e-auth-integration`](./skills/d6e-auth-integration/SKILL.md)         | Instance-brokered OAuth2 login (plus a standalone-client alternative), session cookies, transparent refresh, workspace allow-list.                                       |
-| [`d6e-workspace-api-client`](./skills/d6e-workspace-api-client/SKILL.md) | Bearer vs cookie header matrix, the `caller + accessToken + AbortSignal` wrapper convention in `src/lib/server/d6e-client.ts`, and the idempotent prompt-rule bootstrap. |
+| [`d6e-workspace-api-client`](./skills/d6e-workspace-api-client/SKILL.md) | Bearer vs cookie header matrix, the `caller + accessToken + AbortSignal` wrapper convention in `src/lib/server/d6e-client.ts`, async intent job API (create / poll / cancel for long-running runs), and the idempotent prompt-rule bootstrap. |
 | [`d6e-prompt-driven-ui`](./skills/d6e-prompt-driven-ui/SKILL.md)         | `kind`-discriminated JSON inside fenced code blocks, Zod parse with markdown fallback, XML-tag revision flows, scenario-append activation via the d6e chat UI.           |
 
 ### Install in your agent
@@ -245,9 +245,12 @@ or parent folder later.
 
 ## Status & caveats
 
-- `/api/workflows/execute-by-intent` is internal to d6e and has no
-  stability guarantee. If the upstream contract changes, this app will
-  need to follow.
+- `/api/workflows/execute-by-intent` (synchronous) and
+  `/api/workflows/execute-by-intent/jobs` (async job API) are internal
+  to d6e and have no stability guarantee. If the upstream contract
+  changes, this app will need to follow. The async job API is
+  recommended for Vercel-hosted frontends where heavy agent runs
+  exceed the platform's `maxDuration` limit.
 - This example uses a single shared workspace per deployment. Every
   user must be a member of `D6E_WORKSPACE_ID`; non-members are blocked
   at `/auth/no-access` after login.

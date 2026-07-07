@@ -1,6 +1,6 @@
 ---
 name: d6e-workspace-api-client
-description: Builds the server-side proxy layer that lets a custom frontend talk to a d6e workspace — file upload, file delete, workflow execution via `execute-by-intent`, chat-session CRUD, workspace prompt rule registration, workspace membership probes, SaaS API calls via the d6e saas-proxy, Google Drive sync mirror endpoints, and workspace pending-invitation admin CRUD. Use when adding a new `/api/*` route that talks to d6e, when designing a fetch wrapper that needs to surface timeouts/aborts cleanly, when seeing 401 on `/api/chat-sessions` or 402 from `execute-by-intent`, when calling freee/Google/Notion APIs with workspace-stored credentials, when writing a bootstrap script that registers workspace prompt rules idempotently, when wiring a Drive Sync UI (config / roots / sync / materialize / picker), or when building an admin members page that needs to list and cancel pending email invitations.
+description: Builds the server-side proxy layer that lets a custom frontend talk to a d6e workspace — file upload, file delete, workflow execution via `execute-by-intent` (synchronous and async job API), chat-session CRUD, workspace prompt rule registration, workspace membership probes, SaaS API calls via the d6e saas-proxy, Google Drive sync mirror endpoints, and workspace pending-invitation admin CRUD. Use when adding a new `/api/*` route that talks to d6e, when designing a fetch wrapper that needs to surface timeouts/aborts cleanly, when seeing 401 on `/api/chat-sessions` or 402 from `execute-by-intent`, when the synchronous execute-by-intent times out and you need the async job API, when building a progress display with tool-trace polling, when adding a cancel button for long-running AI jobs, when calling freee/Google/Notion APIs with workspace-stored credentials, when writing a bootstrap script that registers workspace prompt rules idempotently, when wiring a Drive Sync UI (config / roots / sync / materialize / picker), or when building an admin members page that needs to list and cancel pending email invitations.
 ---
 
 # d6e Workspace API Client
@@ -29,6 +29,14 @@ frontend and a d6e workspace. It covers:
   MoneyForward / Chatwork / Zendesk APIs with the workspace's stored
   credential — after a workspace admin connects the provider in the
   d6e console's settings page (there is no API for that step).
+- The **async intent job API** (`/api/workflows/execute-by-intent/jobs`)
+  that removes the ~13-minute synchronous ceiling. The caller posts a
+  job (returns immediately with a `jobId`), then polls for status, tool
+  trace, and result independently of the HTTP connection lifetime. The
+  d6e instance runs the agent loop in the background (long-lived
+  adapter-node process) with a configurable wall-clock cap (default 30
+  minutes). This is the recommended path for Vercel-hosted frontends
+  where the sync endpoint exceeds `maxDuration`.
 - Optional integrations newer d6e instances expose:
   - **Google Drive Sync Mirror** under `/api/v1/drive-sync/*` — Bearer
     endpoints whose `workspace_id` is supplied in the body or query
@@ -58,6 +66,10 @@ Apply this skill when the user says:
 - "Why does `/api/v1/drive-sync/sync` accept the workspace id in the body but not in the URL?"
 - "Call the freee / Google Drive API with the workspace's stored credential" / "SaaS 連携の API をサーバ側から叩きたい"
 - "Why does execute-by-intent return 402?"
+- "execute-by-intent keeps timing out on Vercel" / "780s タイムアウトを回避したい"
+- "How do I use the async job API?" / "非同期ジョブ API を使いたい"
+- "Add a cancel button for running jobs" / "実行中のジョブをキャンセルしたい"
+- "Show progress (tool trace) while a job is running"
 
 ## Core Concepts
 
@@ -88,6 +100,7 @@ cookies and never reaches client-side JavaScript.
 | `GET ${D6E_BASE_URL}/api/v1/workspaces/{wsId}`                     | `Authorization: Bearer <jwt>`                            | Workspace membership probe (returns 200/403/404)                                                                                                    |
 | `* ${D6E_BASE_URL}/api/v1/workspaces/{wsId}/invitations[/{id}]`    | `Authorization: Bearer <jwt>` (admin role required)      | GET list / DELETE single. See [Workspace invitation admin endpoints](#workspace-invitation-admin-endpoints).                                        |
 | `POST ${D6E_BASE_URL}/api/workflows/execute-by-intent`             | `Authorization: Bearer <jwt>`                            | Body contains `workspaceId` — set server-side                                                                                                       |
+| `* ${D6E_BASE_URL}/api/workflows/execute-by-intent/jobs[/{id}[/cancel]]` | `Authorization: Bearer <jwt>`                    | Async job API — create / poll / cancel. Body contains `workspaceId` on POST (create). See [Async intent job API](#async-intent-job-api).             |
 | `POST ${D6E_BASE_URL}/api/v1/auth/token`                           | none (refresh token in body)                             | Stage 2 / refresh — see auth skill                                                                                                                  |
 | `* ${D6E_BASE_URL}/api/v1/drive-sync/{config,roots,sync,status,…}` | `Authorization: Bearer <jwt>`                            | `workspace_id` is supplied in the **body or query string**, never in the URL path. See [Drive Sync mirror endpoints](#drive-sync-mirror-endpoints). |
 | `POST ${D6E_BASE_URL}/api/v1/saas-proxy`                           | `Authorization: Bearer <jwt>`                            | Proxied SaaS API call using the workspace's stored credential. See [SaaS API calls](#saas-api-calls-through-the-d6e-proxy).                          |
@@ -292,7 +305,10 @@ press.
 | -------------------------------------------------------------------------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `uploadFile(caller, accessToken, payload)`                                 | Bearer + `X-Workspace-ID` | Uploads bytes to file storage. Returns `{ id, filename, contentType, sizeBytes }`.                                                                                                       |
 | `deleteFile(caller, accessToken, fileId)`                                  | Bearer + `X-Workspace-ID` | Best-effort delete. 404 counts as success.                                                                                                                                               |
-| `executeByIntent(caller, accessToken, body, options?)`                     | Bearer                    | Runs the natural-language workflow. Body is `{ message, inputFileRefs? }`; the wrapper injects `workspaceId`. Supports `timeoutMs` (default 270s, below Vercel's 300s cap) and `signal`. |
+| `executeByIntent(caller, accessToken, body, options?)`                     | Bearer                    | Runs the natural-language workflow **synchronously**. Body is `{ message, inputFileRefs? }`; the wrapper injects `workspaceId`. Supports `timeoutMs` (default 270s, below Vercel's 300s cap) and `signal`. For long-running runs, prefer the async job API below. |
+| `createAsyncIntentJob(caller, accessToken, body)`                          | Bearer                    | Creates an async job and returns `{ jobId }` immediately. Body is `{ message, inputFileRefs?, conversationContext? }`; the wrapper injects `workspaceId`. See [Async intent job API](#async-intent-job-api). |
+| `getAsyncIntentJobStatus(caller, accessToken, jobId)`                      | Bearer                    | Polls the status of an async job. Returns the full `AsyncJobStatusResponse` (status, toolTrace, result, error). |
+| `cancelAsyncIntentJob(caller, accessToken, jobId)`                         | Bearer                    | Requests cooperative cancellation. Returns `{ cancelled: boolean }`. |
 | `verifyWorkspaceMembership(caller, accessToken)`                           | Bearer                    | 200 = `true`, 403/404 = `false`, other status throws `D6eClientError`.                                                                                                                   |
 | `listChatSessions(caller, accessToken, workspaceId)`                       | Cookie                    | Returns `ChatSessionRow[]`.                                                                                                                                                              |
 | `getChatSessionById(caller, accessToken, sessionId)`                       | Cookie                    | Fetch one row.                                                                                                                                                                           |
@@ -376,6 +392,134 @@ The response shape:
 `message` is the LLM's free-form text. Parsing it into a typed payload
 is the responsibility of the [`d6e-prompt-driven-ui`](../d6e-prompt-driven-ui/SKILL.md)
 skill.
+
+### Async intent job API
+
+> Available on d6e instances running `feat/async-intent-jobs` or later.
+> See also [docs/d6e-api-integration.md §2b](../../docs/d6e-api-integration.md)
+> for full request/response schemas.
+
+The synchronous `execute-by-intent` holds the HTTP connection open for
+the entire agent run, which can exceed Vercel's `maxDuration` (~800s) on
+heavy workloads. The **async job API** removes this ceiling by posting a
+job (immediate return with `jobId`), then polling for status
+independently. The d6e backend runs as a long-lived `adapter-node`
+process, so the agent runs in the background with a configurable
+wall-clock cap (default 30 minutes).
+
+#### Endpoints
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/api/workflows/execute-by-intent/jobs` | Create job — returns `{ jobId }` |
+| `GET` | `/api/workflows/execute-by-intent/jobs/{id}` | Poll status, tool trace, result |
+| `POST` | `/api/workflows/execute-by-intent/jobs/{id}/cancel` | Request cooperative cancellation |
+
+All three use `Authorization: Bearer <jwt>`.
+
+#### Job lifecycle
+
+```
+queued → running → succeeded
+                 → failed
+                 → cancelled
+```
+
+- **`queued`**: Row created, awaiting runner pickup (typically
+  immediate).
+- **`running`**: Runner claimed the job (CAS on `status`). Heartbeat
+  updated every ~10 seconds. The runner checks `cancel_requested` on
+  each tick.
+- **`succeeded`**: Agent completed; `result` field carries the same
+  `IntentResponse` shape as the sync endpoint.
+- **`failed`**: Agent error (LLM failure, timeout, etc.); `error` field
+  describes the cause.
+- **`cancelled`**: Cooperative cancellation acknowledged; `error` =
+  `"Job was cancelled"`.
+
+#### Wrapper functions (d6e-client.ts)
+
+```ts
+export async function createAsyncIntentJob(
+  caller: string,
+  accessToken: string,
+  body: { message: string; inputFileRefs?: IntentInputFileRef[]; conversationContext?: string }
+): Promise<{ jobId: string }>;
+
+export async function getAsyncIntentJobStatus(
+  caller: string,
+  accessToken: string,
+  jobId: string
+): Promise<AsyncJobStatusResponse>;
+
+export async function cancelAsyncIntentJob(
+  caller: string,
+  accessToken: string,
+  jobId: string
+): Promise<{ cancelled: boolean }>;
+```
+
+Type definitions:
+
+```ts
+interface AsyncJobToolTrace {
+  tool: string;
+  startedAt: string;        // ISO 8601
+  finishedAt?: string | null;
+}
+
+type AsyncJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+
+interface AsyncJobStatusResponse {
+  id: string;
+  status: AsyncJobStatus;
+  toolTrace: AsyncJobToolTrace[];
+  startedAt: string | null;
+  finishedAt: string | null;
+  elapsedMs: number | null;
+  result: IntentResponse | null;  // same shape as sync endpoint
+  error: string | null;
+}
+```
+
+#### Integration pattern
+
+For a Vercel-hosted frontend:
+
+1. **Submit:** Server route calls `createAsyncIntentJob()` and returns
+   `{ jobId }` to the browser.
+2. **Background finalize (optional):** Use `waitUntil()` to poll
+   `getAsyncIntentJobStatus()` and write the result to
+   `chat_session` once the job completes — so even if the user
+   closes the tab, the result is persisted.
+3. **Client poll:** Browser polls a same-origin proxy (e.g.
+   `/api/intent/d6e-job/{id}`) at 3–5s intervals. Render
+   `toolTrace` entries and `elapsedMs` as a live progress display.
+4. **Cancel:** Browser calls a same-origin proxy (e.g.
+   `/api/intent/d6e-job/{id}/cancel`) when the user clicks cancel.
+5. **Finalize:** On terminal status, update the UI. `succeeded` →
+   process `result` as normal. `failed`/`cancelled` → render
+   `error`.
+
+#### Guardrails
+
+| Guardrail | Default | Env var |
+|-----------|---------|---------|
+| Wall-clock cap | 30 min | `INTENT_JOB_TIMEOUT_MS` |
+| Step cap | 50 | `AGENT_RECURSION_LIMIT` |
+| Heartbeat stale | 60s | — |
+| Workspace concurrency | 3 | — |
+| Tool trace cap | 100 | — |
+
+#### When to use async vs sync
+
+| Scenario | Recommendation |
+|----------|----------------|
+| Vercel-hosted frontend, heavy agent runs (> 5 min) | **Async** — avoids `maxDuration` |
+| SNS bot proxy (Slack / Discord / LINE) | **Sync** — simpler, fits within the bot platform's timeout |
+| Light agent runs (< 2 min), no file generation | Either works; sync is simpler |
+| Need progress display (tool trace) | **Async** — tool trace is only available via poll |
+| Need user-initiated cancellation | **Async** — the sync endpoint has no cancel mechanism |
 
 ### Persistence: chat_session rows
 
@@ -625,6 +769,9 @@ admin can render a distinct toast for each.
 - [ ] For Drive Sync endpoints, the proxy overrides `workspace_id` in **both** the JSON body and any query string before forwarding (the d6e route accepts it in either spot, and the browser must never choose it).
 - [ ] If you expose `/sync` or `/roots POST`, the UI polls `/status` (or reads `config.last_sync_error`) before claiming success — the d6e endpoint returns `200 { status: 'started' }` before the job actually finishes.
 - [ ] If you expose admin invitation management, the proxy forwards 403 / 404 from `GET/DELETE /workspaces/{id}/invitations` unchanged (so the UI can tell "not admin" from "no such invitation"), and `POST /workspaces/{id}/members` surfaces both `{ membership }` and `{ invitation }` branches to the client.
+- [ ] If using the async job API, the proxy pins `workspaceId` in the create-job body (same rule as sync `execute-by-intent`).
+- [ ] If using `waitUntil()` for background finalization, handle the case where the Vercel function is recycled (the d6e job still runs — the next poll or page load should pick up the result).
+- [ ] Async job poll proxies (e.g. `/api/intent/d6e-job/{id}`) never expose the raw d6e endpoint URL to the browser.
 - [ ] On 401/403 inside a route, the wrapper bubbles the status to the browser; do NOT call `clearSession()` here (the hook layer already manages refresh).
 - [ ] Bootstrap script SHA-256-hashes the prompt body and compares against every existing rule's content before POSTing.
 - [ ] Bootstrap script reads `D6E_INIT_REFRESH_TOKEN` separately from end-user cookies.
@@ -641,9 +788,10 @@ admin can render a distinct toast for each.
 
 ### Reliability
 
-- Tune `executeByIntent`'s timeout to whatever the upstream LLM round-trip can plausibly take, but keep it strictly below Vercel's `maxDuration` so the function returns a clean 504 rather than being killed mid-flight.
+- Tune `executeByIntent`'s timeout to whatever the upstream LLM round-trip can plausibly take, but keep it strictly below Vercel's `maxDuration` so the function returns a clean 504 rather than being killed mid-flight. For runs that routinely exceed this, switch to the async job API.
 - For non-critical writes (e.g. analytics, chat_session append), wrap the call in a `try/catch` and log on failure instead of blowing up the user-visible response. The reference `/api/intent` handler still returns the LLM result even if persistence failed; the browser can recover.
 - Treat `404` on file delete as success — files might have been GC'd or already removed in a parallel tab.
+- When using `waitUntil()` for async job finalization, implement retry logic for the final `chat_session` write — the Vercel function may be recycled between poll ticks. The d6e-side job result is persisted in `intent_job` regardless, so the data is not lost.
 
 ### Operational
 
@@ -691,7 +839,31 @@ do this from the custom frontend. See [SaaS API calls](#saas-api-calls-through-t
 The configured `timeoutMs` is shorter than the LLM round-trip. Bump
 `DEFAULT_INTENT_TIMEOUT_MS` (currently 270s) — but stay below
 `@sveltejs/adapter-vercel`'s `maxDuration: 300` so the function
-returns gracefully.
+returns gracefully. Alternatively, switch to the [async job
+API](#async-intent-job-api) which bypasses the HTTP connection lifetime
+entirely.
+
+### `POST .../execute-by-intent/jobs` returns 429
+
+The workspace has hit its per-workspace concurrency cap (default 3
+running jobs). Either wait for an existing job to finish, cancel one
+via `POST .../jobs/{id}/cancel`, or ask the instance admin to raise the
+limit.
+
+### Async job status stays `running` with stale heartbeat
+
+The runner process was killed (e.g. container restart) mid-flight. The
+d6e side detects staleness after 60s (heartbeat not updated) and will
+transition the job to `failed` automatically on the next status check.
+If you see this consistently, investigate the d6e instance's process
+health.
+
+### Async job status shows `cancelled` but the cancel request returned `false`
+
+`{ cancelled: false }` means the job was not in `running` state when
+the cancel request arrived — it had already finished (or was still
+`queued`). Check `finishedAt` and `status` on the poll response to see
+what actually happened.
 
 ### `npm run init` POSTs a duplicate rule every time
 
