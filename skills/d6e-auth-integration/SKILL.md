@@ -496,15 +496,14 @@ slash normalization).
 
 ### `invalid_redirect_uri` (400) from the token exchange
 
-The instance checks a non-loopback `redirect_uri` you POST against its
-own allow-list before relaying the code: the primary
-`{ORIGIN}/auth/callback` plus every entry in its
-`ALLOWED_REDIRECT_URIS` env var (comma-separated; trailing slashes are
-ignored). Your app's callback is not on that list. Ask the instance
-operator to add it — and remember each deployed environment (preview
-deploy, production) needs its own entry. Loopback callbacks skip this
-check on instances running d6e api v0.20.1+; on older instances,
-localhost ports still need explicit `ALLOWED_REDIRECT_URIS` entries.
+The instance relays the code to d6e-auth, which re-validates
+`redirect_uri` against the same registration used at authorize time.
+Your app's callback is not registered (or the workspace hint does not
+match a per-workspace registration). Register it on d6e-auth — franchise
+portal for instance-wide, or Workspace Settings → Integration → Redirect
+URIs for workspace-scoped tokens. Remember each deployed environment
+(preview deploy, production) needs its own entry. Loopback callbacks need
+no registration on d6e ≥ v0.20.1.
 
 ### `token_exchange_failed` (400/401) from the token exchange
 
