@@ -4,29 +4,31 @@
 prompt rule on a running d6e instance. Run it once per workspace before
 you use the AI Journal page.
 
-## Enabling end-user login (d6e instance operator)
+## Enabling end-user login
 
-Before anyone can log into this app, the operator of the **d6e instance**
-must allow this app's OAuth callback URL. Login is *instance-brokered*:
-`/auth/callback` exchanges the authorization code at the instance's own
+Before anyone can log into this app, register this app's OAuth callback
+URL on d6e-auth. Login is *instance-brokered*: `/auth/callback`
+exchanges the authorization code at the instance's own
 `${D6E_BASE_URL}/api/v1/auth/token`, which relays it to d6e-auth using
-the instance's client credentials. Two allow-lists must therefore include
-every environment's callback URL:
+the instance's client credentials. d6e-auth validates `redirect_uri` at
+both authorize and token exchange. Register every environment's callback
+URL in one of these places:
 
-1. **d6e-auth `registered_client.redirectUris`** — add the callback URL
+1. **Per-workspace (self-service)** — a workspace admin adds each URL
    (e.g. `http://localhost:5173/auth/callback` for dev and
-   `https://<deploy>/auth/callback` for prod) to the redirect URIs of the
-   instance's own registered client on d6e-auth.
-2. **The instance's `ALLOWED_REDIRECT_URIS`** — set this env var on the
-   d6e instance to the same comma-separated list. The instance validates
-   the `redirect_uri` of the code exchange against the ORIGIN-derived
-   callback plus this list. Docker Compose already forwards it to the
-   `api` service via `env_file: .env`, so adding it to the instance's
-   `.env` is enough — no Compose edit required.
+   `https://<deploy>/auth/callback` for prod) in the d6e console:
+   Workspace Settings → Integration → **Redirect URIs**. Must be
+   absolute `https://` for deployed URLs (loopback needs no
+   registration). Tokens issued via these URIs carry a
+   `d6e_workspace_id` claim scoped to that workspace.
+2. **Instance-wide (franchise portal)** — add the URL to the instance's
+   `registered_client.redirectUris` on d6e-auth at
+   `${D6E_AUTH_URL}/{locale}/account/franchise`. These logins issue
+   unscoped tokens.
 
 Then set this app's `D6E_AUTH_CLIENT_ID` to the instance's own client id
-(no client secret is needed). Frontends that cannot change the instance's
-allow-list can use the standalone-client variant in
+(no client secret is needed). Frontends that cannot register a redirect
+URI on the instance can use the standalone-client variant in
 [`../skills/d6e-auth-integration/SKILL.md`](../skills/d6e-auth-integration/SKILL.md)
 instead.
 

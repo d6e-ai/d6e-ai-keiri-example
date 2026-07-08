@@ -39,8 +39,8 @@ posts the authorization code to the d6e instance, which relays it to
 d6e-auth with its own client credentials, so this frontend carries no
 client secret. A standalone-client variant — the frontend registers its
 own d6e-auth client and re-mints via refresh — remains available as a
-fallback for deployments that cannot edit the instance's
-`ALLOWED_REDIRECT_URIS`; see
+fallback for deployments that cannot register a redirect URI on the
+d6e instance; see
 [`../skills/d6e-auth-integration/SKILL.md`](../skills/d6e-auth-integration/SKILL.md).
 
 ## Phase 2 — Multi-workspace support

@@ -13,8 +13,8 @@
 // Main specifications:
 //   - buildAuthorizeUrl(state): returns the absolute URL of the login
 //     page on d6e-auth. client_id is the d6e INSTANCE's OAuth client id
-//     (D6E_AUTH_CLIENT_ID mirrors the instance's own value); the
-//     instance's redirect-uri allow-list must include redirect_uri.
+//     (D6E_AUTH_CLIENT_ID mirrors the instance's own value); redirect_uri
+//     must be registered on d6e-auth (per-workspace or instance-wide).
 //   - exchangeAuthorizationCode(caller, code): POSTs grant_type=
 //     authorization_code to ${D6E_BASE_URL}/api/v1/auth/token. No client
 //     credentials are sent; the instance adds them before forwarding to
@@ -40,7 +40,7 @@
 //   - A standalone-client variant (the frontend registers its own
 //     d6e-auth client and re-mints via refresh) is documented in
 //     skills/d6e-auth-integration/SKILL.md for deployments that cannot
-//     change the d6e instance's redirect-uri allow-list.
+//     register a redirect URI on the d6e instance they use.
 
 import { getD6eAuthClientId, getD6eAuthRedirectUri, getD6eAuthUrl, getD6eUrl } from './env';
 
@@ -144,8 +144,8 @@ export function decodeJwtExpMs(token: string): number | null {
 // The instance relays the code to d6e-auth with its OWN client
 // credentials, so the pair it returns is already signed for the
 // audience every ${D6E_BASE_URL} Bearer endpoint accepts -- this
-// frontend holds no client secret. redirect_uri must be present and is
-// validated by the instance against ORIGIN + ALLOWED_REDIRECT_URIS.
+// frontend holds no client secret. redirect_uri must be present; d6e-auth
+// validates it (instance-wide or per-workspace registration).
 export async function exchangeAuthorizationCode(
 	caller: string,
 	code: string

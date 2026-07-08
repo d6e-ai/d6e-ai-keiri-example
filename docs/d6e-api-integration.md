@@ -191,9 +191,10 @@ user. The flow lives in these SvelteKit routes:
 No `client_id` / `client_secret` is sent by this app: the d6e instance
 injects its own when it forwards the grant to d6e-auth. The `redirect_uri`
 must be present (d6e-auth requires it for the authorization_code grant)
-and allow-listed on the instance — both in the instance's
-`registered_client.redirectUris` on d6e-auth and in the instance's
-`ALLOWED_REDIRECT_URIS` env var.
+and registered on d6e-auth — instance-wide in
+`registered_client.redirectUris` or per-workspace via Workspace Settings
+→ Integration → **Redirect URIs**. The instance relays `redirect_uri`
+unchanged and does not validate it.
 
 The d6e instance returns a token pair signed for its own audience, and
 **this pair is written straight to the user's cookies**. All subsequent
@@ -232,8 +233,8 @@ instance), [`src/lib/server/session.ts`](../src/lib/server/session.ts)
 [`src/hooks.server.ts`](../src/hooks.server.ts) (per-request session
 loading + unauthenticated redirect).
 
-> **Alternative — standalone client.** A frontend that cannot change the
-> d6e instance's redirect-uri allow-list can register its own
+> **Alternative — standalone client.** A frontend that cannot register a
+> redirect URI on the d6e instance can register its own
 > `registered_client` on d6e-auth (own `client_id` / `client_secret`),
 > exchange the code at `${D6E_AUTH_URL}/api/v1/auth/token`, then re-mint
 > the refresh token at `${D6E_BASE_URL}/api/v1/auth/token` to obtain an

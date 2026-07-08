@@ -62,10 +62,11 @@ export function getD6eAuthUrl(caller: string): string {
 
 // OAuth client id used to drive the login. In the instance-brokered
 // flow this is the d6e INSTANCE's own client id -- set it to the same
-// value as the instance's D6E_AUTH_CLIENT_ID. The instance's
-// redirect-uri allow-list (ORIGIN + ALLOWED_REDIRECT_URIS) must include
-// this app's callback URL before login can succeed. No client secret is
-// needed: the instance injects its own when relaying to d6e-auth.
+// value as the instance's D6E_AUTH_CLIENT_ID. The callback URL must be
+// registered on d6e-auth (per-workspace in Workspace Settings →
+// Integration → Redirect URIs, or instance-wide in the franchise
+// portal) before login can succeed. No client secret is needed: the
+// instance injects its own when relaying to d6e-auth.
 export function getD6eAuthClientId(caller: string): string {
 	return requireEnv('D6E_AUTH_CLIENT_ID', caller);
 }

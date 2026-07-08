@@ -342,6 +342,12 @@ ignored.
 {/if}
 ```
 
+**Security note:** `renderMarkdown` MUST escape inline HTML and restrict
+link URL schemes (as `src/lib/markdown.ts` does in the keiri example).
+Passing raw LLM text through a permissive markdown renderer into
+`{@html}` is an XSS sink — if in doubt, render escaped plain text
+instead.
+
 The fallback branch always renders **something**. The user sees the
 parse reason and the raw assistant text, formatted as markdown.
 
@@ -489,6 +495,7 @@ will create a duplicate.
 - [ ] `parseAssistantMessage()` never throws — failures collapse to `kind: 'fallback'`.
 - [ ] The regex uses both the `g` and `i` flags and resets `lastIndex = 0` before each use.
 - [ ] The renderer always handles `parsed.kind === 'fallback'` with a markdown render of `rawText`.
+- [ ] The markdown fallback renderer escapes inline HTML and restricts link schemes — LLM output must never reach `{@html}` unsanitized.
 - [ ] Revision flows wrap the prior JSON in a recognisable XML tag (`<previous_journal>`, `<additional_comment>`, `<registration_request>`); the prompt enumerates the tags it understands.
 - [ ] Re-sending revisions also re-sends `inputFileRefs[]` so the LLM can re-read source attachments.
 - [ ] Scenario-append files are explicitly outside `npm run init` (they go through the d6e chat UI, not `/api/workspace-prompt-rules`).
