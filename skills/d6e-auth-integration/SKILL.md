@@ -17,7 +17,7 @@ using the instance's own client credentials and returns a pair already
 signed for the instance's audience. This skill teaches that
 instance-brokered Authorization Code flow (no client secret in the
 frontend), plus a standalone-client alternative for frontends that
-cannot change the instance's redirect-uri allow-list.
+cannot register a redirect URI on the d6e instance they use.
 
 Companion concepts covered here:
 
@@ -74,22 +74,19 @@ sequenceDiagram
 Because the exchange happens at the instance, the returned pair is
 already signed for the audience the instance's Bearer endpoints accept,
 so it lands straight in cookies. The frontend sends **no client
-secret** — the instance owns those credentials. Two allow-lists gate the
-flow: d6e-auth checks the authorize request's `redirect_uri` against the
-instance's `registered_client.redirectUris` (editable self-service in
-the d6e-auth franchise portal), and the instance's token relay checks it
-against the ORIGIN-derived callback plus `ALLOWED_REDIRECT_URIS`.
-
-**Loopback callbacks skip both allow-lists.** A `redirect_uri` on
-`localhost`, `127.0.0.0/8`, or `[::1]` — any port, any path — is always
-accepted by d6e-auth and by the instance's token relay, so local
-development (`npm run dev` on any port) needs no registration at all.
-Only deployed (non-loopback) callback URLs must be registered — see
-"Registering the redirect URI" under Step 1.
+secret** — the instance owns those credentials. **d6e-auth is the
+single authority for redirect URI validation** at both authorize and
+token exchange, against `registered_client.redirectUris` (instance-wide,
+franchise portal) and `workspace_redirect_uri` (per-workspace,
+Workspace Settings → Integration → **Redirect URIs**). The instance's
+token relay forwards `redirect_uri` unchanged. Loopback URIs
+(localhost / 127.0.0.0/8 / [::1], any port) need no registration and
+issue unscoped tokens. Workspace-registered URIs issue tokens with a
+`d6e_workspace_id` claim scoped to that workspace only.
 
 ### Alternative: standalone client (when you don't operate the instance)
 
-If you cannot change the d6e instance's redirect-uri allow-list — e.g.
+If you cannot register a redirect URI on the d6e instance you use — e.g.
 you are a third party building against a managed instance you do not
 operate — register your **own** `registered_client` on d6e-auth instead
 and use the original two-stage exchange:
@@ -113,9 +110,9 @@ Everything else in this skill (cookies, refresh, allow-list, logout) is
 identical. The trade-off: one extra exchange on login and a client
 secret to protect, in return for needing no change on the instance side.
 Prefer the instance-brokered flow above for local development (loopback
-callbacks need no registration anywhere) and whenever you (or your
-operator) can edit the instance's `ALLOWED_REDIRECT_URIS` for deployed
-URLs.
+callbacks need no registration anywhere) and whenever you (or a workspace
+admin) can register your callback in Workspace Settings → Integration →
+**Redirect URIs**, or instance-wide in the d6e-auth franchise portal.
 
 ### Cookie layout
 
@@ -269,28 +266,33 @@ above instead uses your own `client_id` + `D6E_AUTH_CLIENT_SECRET`.)
 
 **Loopback callbacks need no registration.** If
 `D6E_AUTH_REDIRECT_URI` points at `localhost`, `127.0.0.0/8`, or
-`[::1]` — any port, any path — both validation layers accept it
-automatically, so the local-dev value above works out of the box.
+`[::1]` — any port, any path — d6e-auth accepts it automatically, so
+the local-dev value above works out of the box.
 
 A **deployed** (non-loopback) `D6E_AUTH_REDIRECT_URI` must be
-allow-listed in BOTH places below, or the flow fails (see
-Troubleshooting for the distinct error each list produces):
+registered on d6e-auth in one of the two places below, or the flow
+fails (see Troubleshooting). Workspace admins can self-serve the
+per-workspace path; instance-wide registration still needs a franchise
+owner/admin (or d6e-auth platform admin).
 
-| Allow-list | Checked when | Who can edit |
-| --- | --- | --- |
-| `registered_client.redirectUris` on d6e-auth | At the d6e-auth login form, before any code is issued | **Self-service for franchise owners/admins**: open `${D6E_AUTH_URL}/{locale}/account/franchise`, find the instance card under *d6e Instance Connection*, and add the URL under **Redirect URIs**. d6e-auth platform admins can also edit any instance under `/admin/instances` |
-| `ALLOWED_REDIRECT_URIS` env var on the d6e instance | At the instance's token relay during the code exchange | Whoever operates the instance deployment (comma-separated env var) |
+| Registration | Scope | Who can edit | Token scope |
+| --- | --- | --- | --- |
+| `registered_client.redirectUris` on d6e-auth | Instance-wide | **Self-service for franchise owners/admins**: open `${D6E_AUTH_URL}/{locale}/account/franchise`, find the instance card under *d6e Instance Connection*, and add the URL under **Redirect URIs**. d6e-auth platform admins can also edit any instance under `/admin/instances` | Unscoped (no `d6e_workspace_id`) |
+| `workspace_redirect_uri` (via d6e console) | Per workspace | **Workspace admins**: `{D6E_BASE_URL}/{locale}/workspaces/{id}/settings` → **Integration** → **Redirect URIs**. Must be absolute `https://`, no URL fragment, max 2000 chars. The instance proxies to d6e-auth's client API (`POST/DELETE /api/v1/client/workspace-redirect-uris`) | Workspace-scoped (`d6e_workspace_id` claim) |
 
-Allow-listing is still the only step a plain workspace developer cannot
-do alone, but it now only applies to deployed URLs and no longer
-requires a d6e-auth platform admin: the d6e-auth half is a UI edit for
-whoever holds the franchise owner/admin role (typically the
-organization that registered the instance), and the env var is set by
-the instance operator. Request both **before** you deploy — local
-development and every other step in this skill work with plain
-workspace access. Each deployed environment (preview deploy,
-production) needs its own entry in both lists, matching your callback
-URL character-for-character.
+Register each deployed environment (preview deploy, production) with
+its own callback URL, matching character-for-character. Franchise
+admins can view and delete workspace-registered URIs (workspace ID,
+added-by email, created-at) on the franchise portal instance card.
+The deprecated `ALLOWED_REDIRECT_URIS` env var on the d6e instance is
+no longer read — only d6e-auth validates redirect URIs.
+
+When the same callback URL is registered in **multiple workspaces**,
+the authorize URL must include `d6e_workspace_id=<D6E_WORKSPACE_ID>`.
+d6e-auth uses this to issue a token scoped to the correct workspace
+instead of picking the earliest registration. `buildAuthorizeUrl` in
+this repo adds the parameter automatically from `D6E_WORKSPACE_ID`.
+Omitting it keeps the legacy behavior (earliest registration wins).
 
 ### Step 2: `/auth/login`
 
@@ -379,7 +381,7 @@ POST-only by design so an `<img src="...">` cannot force a sign-out.
 
 | Function                                             | Purpose                                                                                                                                           |
 | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `buildAuthorizeUrl(caller, state)`                   | Returns `${D6E_AUTH_URL}/auth/login?client_id&redirect_uri&state&response_type=code`. `client_id` is the d6e instance's own client id.            |
+| `buildAuthorizeUrl(caller, state)`                   | Returns `${D6E_AUTH_URL}/auth/login?client_id&redirect_uri&state&response_type=code&d6e_workspace_id`. `client_id` is the d6e instance's own client id; `d6e_workspace_id` is taken from `D6E_WORKSPACE_ID` so per-workspace redirect registrations resolve to the correct scope. |
 | `exchangeAuthorizationCode(caller, code)`            | POSTs `grant_type=authorization_code` (+ `redirect_uri`) to the **d6e instance**. Sends no client credentials; returns an instance-audience pair. |
 | `refreshAccessTokenViaBaseUrl(caller, refreshToken)` | Per-session refresh — POSTs `grant_type=refresh_token` to the **d6e instance**. No `client_id` needed.                                            |
 | `createOauthState()`                                 | 32 bytes from `crypto.getRandomValues`, base64url-encoded.                                                                                        |
@@ -449,7 +451,7 @@ member" (route to `/auth/no-access`) from "couldn't ask" (route to
 ## Implementation Checklist
 
 - [ ] All five env vars are present and validated on startup (see `src/lib/server/env.ts`); `D6E_AUTH_CLIENT_ID` is the instance's own client id and no client secret is required. Client ID and Workspace ID come from the workspace settings page's Integration section (admin-only view — see Quick Start Step 0).
-- [ ] A deployed (non-loopback) `D6E_AUTH_REDIRECT_URI` is allow-listed on the instance — in BOTH its `registered_client.redirectUris` on d6e-auth (self-service for franchise owners/admins at `${D6E_AUTH_URL}/{locale}/account/franchise`) and its `ALLOWED_REDIRECT_URIS` env var. Loopback callbacks (localhost / 127.0.0.0/8 / [::1], any port) skip both lists and need no registration.
+- [ ] `D6E_AUTH_REDIRECT_URI` is registered on d6e-auth — instance-wide in `registered_client.redirectUris` (franchise portal; unscoped tokens) or per-workspace in Workspace Settings → Integration → **Redirect URIs** (workspace-scoped `d6e_workspace_id` tokens). Loopback callbacks need no registration.
 - [ ] `/auth/callback` exchanges the code at the d6e instance (`exchangeAuthorizationCode`) and stores the returned pair directly.
 - [ ] All four cookies set `httpOnly`, `sameSite: 'lax'`, `secure: !dev`, `path: '/'`.
 - [ ] `loadSession()` refreshes via `${D6E_BASE_URL}/api/v1/auth/token` (the d6e instance), not d6e-auth.
@@ -474,7 +476,7 @@ member" (route to `/auth/no-access`) from "couldn't ask" (route to
 
 - Treat `D6E_INIT_REFRESH_TOKEN` as a secret with the same sensitivity as a database password. Rotate it whenever a developer with admin access leaves.
 - When `D6E_AUTH_URL` is unreachable during logout, the user is still locally signed out (cookies clear synchronously); the d6e-auth-side cleanup waits for the upstream to recover.
-- Vercel deploys map env vars 1:1 with `.env`. Don't forget to set `D6E_AUTH_REDIRECT_URI` per environment (preview deploys need their own redirect URIs registered on d6e-auth — a franchise owner/admin can add them in the franchise portal).
+- Vercel deploys map env vars 1:1 with `.env`. Don't forget to set `D6E_AUTH_REDIRECT_URI` per environment. Preview deploys need their own redirect URIs registered on d6e-auth — workspace admins can add them in Workspace Settings → Integration → **Redirect URIs** (or a franchise owner/admin can add them instance-wide in the franchise portal).
 
 ## Troubleshooting
 
@@ -494,15 +496,14 @@ slash normalization).
 
 ### `invalid_redirect_uri` (400) from the token exchange
 
-The instance checks a non-loopback `redirect_uri` you POST against its
-own allow-list before relaying the code: the primary
-`{ORIGIN}/auth/callback` plus every entry in its
-`ALLOWED_REDIRECT_URIS` env var (comma-separated; trailing slashes are
-ignored). Your app's callback is not on that list. Ask the instance
-operator to add it — and remember each deployed environment (preview
-deploy, production) needs its own entry. Loopback callbacks skip this
-check on instances running d6e api v0.20.1+; on older instances,
-localhost ports still need explicit `ALLOWED_REDIRECT_URIS` entries.
+The instance relays the code to d6e-auth, which re-validates
+`redirect_uri` against the same registration used at authorize time.
+Your app's callback is not registered (or the workspace hint does not
+match a per-workspace registration). Register it on d6e-auth — franchise
+portal for instance-wide, or Workspace Settings → Integration → Redirect
+URIs for workspace-scoped tokens. Remember each deployed environment
+(preview deploy, production) needs its own entry. Loopback callbacks need
+no registration on d6e ≥ v0.20.1.
 
 ### `token_exchange_failed` (400/401) from the token exchange
 

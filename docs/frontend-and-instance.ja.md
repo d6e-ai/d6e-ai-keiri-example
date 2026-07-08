@@ -95,7 +95,7 @@ English version: [frontend-and-instance.md](./frontend-and-instance.md)
 正確な形は [`d6e-api-integration.md`](./d6e-api-integration.md) を
 参照してください。
 
-## 認証: ログインは 1 回、許可リストは 2 つ
+## 認証: ログインは 1 回、d6e-auth でリダイレクト URI を登録
 
 完全なフロー（シーケンス図とコード付き）は
 [`d6e-auth-integration` スキル](../skills/d6e-auth-integration/SKILL.md)
@@ -112,16 +112,22 @@ English version: [frontend-and-instance.md](./frontend-and-instance.md)
    「フロントエンド用アカウント」のようなものは存在しません。
 
 交換をインスタンスが仲介するため、フロントエンドは **client secret を
-一切保持しません**。その代わり、デプロイ後のコールバック URL は
-**2 箇所**の許可リストへの登録が必要です（ループバック/`localhost` URL は
-例外 — 任意のポート・任意のパスで登録不要。d6e ≥ v0.20.1）。
+一切保持しません**。デプロイ後のコールバック URL は **d6e-auth** に
+登録する必要があります（ループバック/`localhost` URL は例外 — 任意の
+ポート・任意のパスで登録不要。d6e ≥ v0.20.1）。
 
-- **www.d6e.ai** 上のインスタンスのクライアント登録
-  （セルフサービス: `https://www.d6e.ai/{locale}/account/franchise`）—
-  ログインページがコードを発行する時に検査されます。
-- インスタンスの **`ALLOWED_REDIRECT_URIS`** 環境変数 — インスタンスが
-  コードを中継する時に検査されます。変更にはインスタンスの再起動が
-  必要なので、インスタンス運用者と調整してください。
+- **インスタンス全体**（スコープなしトークン）: フランチャイズポータル
+  （`https://www.d6e.ai/{locale}/account/franchise` → インスタンスカード →
+  **Redirect URIs**）。ログインページでのコード発行時と、インスタンスが
+  コードを中継する時の両方で検査されます。
+- **ワークスペース単位**（ワークスペーススコープのトークン）: d6e コンソール
+  → Workspace Settings → Integration → **Redirect URIs**。
+  フロントエンドが `D6E_WORKSPACE_ID` を設定し、認可 URL に
+  `d6e_workspace_id` を付与する場合に使用します（auth スキル参照）。
+  同じコールバック URL を複数ワークスペースに登録する場合は必須です。
+
+インスタンスは `ALLOWED_REDIRECT_URIS` を読み取らなくなりました。
+リダイレクト URI の検証は d6e-auth が一元管理します。
 
 ## Plugin との関係（と、混同しないための整理）
 
@@ -174,8 +180,9 @@ Plugin 開発そのもの（STF ランタイム・instant-run・ワークフロ�
    （`template.yaml`）をインストールします。
 3. **フロントエンドのデプロイ** — 静的/SSR ホスティングならどこでも
    動きます（本リファレンスは Vercel）。
-4. **デプロイ後の redirect URI 登録** — www.d6e.ai *と*インスタンスの
-   `ALLOWED_REDIRECT_URIS` の両方に登録し、インスタンスを再起動します。
+4. **デプロイ後の redirect URI 登録** — d6e-auth に登録します（インスタンス
+   全体向けはフランチャイズポータル、`D6E_WORKSPACE_ID` を使う場合は
+   コンソールのワークスペース単位 Redirect URIs）。
 5. **運用** — トークン・ポリシー・メンバーシップはインスタンスが
    ユーザー単位で強制します。フロントエンドはステートレスなプロキシ +
    UI であり続けます。

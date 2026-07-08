@@ -143,7 +143,7 @@ Copy `.env.example` to `.env` and fill in the values:
 | `D6E_WORKSPACE_ID`       | all calls                                          | Workspace settings page (`{D6E_BASE_URL}/{locale}/workspaces/{id}/settings`) → Integration section copy button, or the UUID in any workspace URL       |
 | `D6E_AUTH_URL`           | `/auth/login`, `/auth/callback`, refresh           | Base URL of the d6e-auth instance (e.g. `https://www.d6e.ai`) — where the console redirects you when signed out                                        |
 | `D6E_AUTH_CLIENT_ID`     | server-side OAuth                                  | Same Integration section on the settings page ("Client ID", visible to workspace **admins** only); it is the instance's own client id, no secret needed |
-| `D6E_AUTH_REDIRECT_URI`  | `/auth/login`, `/auth/callback`                    | Callback URL exposed by this app (e.g. `http://localhost:5173/auth/callback`). Loopback URLs (localhost, any port) work with no registration; deployed URLs must be allow-listed twice: on d6e-auth (franchise owner/admin: `{D6E_AUTH_URL}/{locale}/account/franchise` → instance card → Redirect URIs) and in the instance's `ALLOWED_REDIRECT_URIS` env var — see [docs/workspace-setup.md](./docs/workspace-setup.md) |
+| `D6E_AUTH_REDIRECT_URI`  | `/auth/login`, `/auth/callback`                    | Callback URL exposed by this app (e.g. `http://localhost:5173/auth/callback`). Loopback URLs (localhost, any port) work with no registration; deployed URLs must be registered on d6e-auth — per-workspace in Workspace Settings → Integration → **Redirect URIs** (workspace admin) or instance-wide in the franchise portal — see [docs/workspace-setup.md](./docs/workspace-setup.md) |
 | `D6E_INIT_REFRESH_TOKEN` | `npm run init` only                                | Long-lived `auth-refresh` cookie value from a workspace-ADMIN browser session on `D6E_BASE_URL`                                                        |
 
 > Managed d6e deployments expose the Rust API (`/api/v1/...`) and the
@@ -155,15 +155,19 @@ Copy `.env.example` to `.env` and fill in the values:
 
 > **Local development logs in with no registration** — loopback
 > callbacks (localhost, any port) are always accepted. Before logins
-> work on a **deployed** copy, the d6e instance operator must allow its
-> callback URL. The code exchange is brokered by the instance, so this
-> app needs no client secret of its own:
+> work on a **deployed** copy, register this app's callback URL on
+> d6e-auth. The code exchange is brokered by the instance, so this app
+> needs no client secret of its own:
 >
-> 1. Add the callback URL of every deployed environment (e.g.
->    `https://<your-deploy>.vercel.app/auth/callback` for prod) to the
->    **instance's** `registered_client.redirectUris` on d6e-auth.
-> 2. Add the same URL(s) to the instance's `ALLOWED_REDIRECT_URIS` env
->    var (comma-separated); Compose passes it through via `env_file: .env`.
+> 1. **Per-workspace (self-service):** a workspace admin adds each
+>    deployed environment's callback URL (e.g.
+>    `https://<your-deploy>.vercel.app/auth/callback` for prod) in the
+>    d6e console: Workspace Settings → Integration → **Redirect
+>    URIs**. Tokens issued via these URIs are workspace-scoped
+>    (`d6e_workspace_id` claim).
+> 2. **Instance-wide (franchise portal):** add the same URL(s) to the
+>    instance's `registered_client.redirectUris` on d6e-auth at
+>    `${D6E_AUTH_URL}/{locale}/account/franchise` (unscoped tokens).
 > 3. Set `D6E_AUTH_CLIENT_ID` to the instance's own client id in `.env`.
 >
 > Developers who do not operate the instance can instead register their

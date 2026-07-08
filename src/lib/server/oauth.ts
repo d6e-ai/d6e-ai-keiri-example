@@ -13,8 +13,12 @@
 // Main specifications:
 //   - buildAuthorizeUrl(state): returns the absolute URL of the login
 //     page on d6e-auth. client_id is the d6e INSTANCE's OAuth client id
-//     (D6E_AUTH_CLIENT_ID mirrors the instance's own value); the
-//     instance's redirect-uri allow-list must include redirect_uri.
+//     (D6E_AUTH_CLIENT_ID mirrors the instance's own value); redirect_uri
+//     must be registered on d6e-auth (per-workspace or instance-wide).
+//     When the callback is registered per-workspace, include
+//     d6e_workspace_id (from D6E_WORKSPACE_ID) so d6e-auth issues a
+//     token scoped to the correct workspace when the same URI is
+//     registered in multiple workspaces.
 //   - exchangeAuthorizationCode(caller, code): POSTs grant_type=
 //     authorization_code to ${D6E_BASE_URL}/api/v1/auth/token. No client
 //     credentials are sent; the instance adds them before forwarding to
@@ -40,9 +44,14 @@
 //   - A standalone-client variant (the frontend registers its own
 //     d6e-auth client and re-mints via refresh) is documented in
 //     skills/d6e-auth-integration/SKILL.md for deployments that cannot
-//     change the d6e instance's redirect-uri allow-list.
+//     register a redirect URI on the d6e instance they use.
 
-import { getD6eAuthClientId, getD6eAuthRedirectUri, getD6eAuthUrl, getD6eUrl } from './env';
+import {
+	getD6eAuthClientId,
+	getD6eAuthRedirectUri,
+	getD6eAuthUrl,
+	getD6eWorkspaceId
+} from './env';
 
 const TOKEN_REQUEST_TIMEOUT_MS = 30_000;
 
@@ -76,11 +85,13 @@ export function buildAuthorizeUrl(caller: string, state: string): string {
 	const authUrl = getD6eAuthUrl(caller);
 	const clientId = getD6eAuthClientId(caller);
 	const redirectUri = getD6eAuthRedirectUri(caller);
+	const workspaceId = getD6eWorkspaceId(caller);
 	const params = new URLSearchParams({
 		client_id: clientId,
 		redirect_uri: redirectUri,
 		state,
-		response_type: 'code'
+		response_type: 'code',
+		d6e_workspace_id: workspaceId
 	});
 	return `${authUrl}/auth/login?${params.toString()}`;
 }
@@ -144,8 +155,8 @@ export function decodeJwtExpMs(token: string): number | null {
 // The instance relays the code to d6e-auth with its OWN client
 // credentials, so the pair it returns is already signed for the
 // audience every ${D6E_BASE_URL} Bearer endpoint accepts -- this
-// frontend holds no client secret. redirect_uri must be present and is
-// validated by the instance against ORIGIN + ALLOWED_REDIRECT_URIS.
+// frontend holds no client secret. redirect_uri must be present; d6e-auth
+// validates it (instance-wide or per-workspace registration).
 export async function exchangeAuthorizationCode(
 	caller: string,
 	code: string

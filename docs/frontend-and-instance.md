@@ -95,7 +95,7 @@ serves both the Rust API (`/api/v1/*`) and the d6e SvelteKit routes
 path. Your frontend treats them as one host. Exact request/response
 shapes: [`d6e-api-integration.md`](./d6e-api-integration.md).
 
-## Authentication: one login, two allow-lists
+## Authentication: one login, d6e-auth redirect URI registration
 
 The full flow (with sequence diagram and code) is in the
 [`d6e-auth-integration` skill](../skills/d6e-auth-integration/SKILL.md);
@@ -114,16 +114,22 @@ the shape of the relationship is:
    separate "frontend account".
 
 Because the instance brokers the exchange, your frontend holds **no
-client secret**. The price is that your deployed callback URL must be
-allow-listed in **two places** (loopback/`localhost` URLs are exempt —
-any port, any path, no registration, d6e ≥ v0.20.1):
+client secret**. Your deployed callback URL must be registered on
+**d6e-auth** (loopback/`localhost` URLs are exempt — any port, any
+path, no registration, d6e ≥ v0.20.1):
 
-- the instance's client record on **www.d6e.ai**
-  (self-service: `https://www.d6e.ai/{locale}/account/franchise`) —
-  checked when the login page issues the code;
-- the instance's **`ALLOWED_REDIRECT_URIS`** env var — checked when the
-  instance relays your code. Changing it requires an instance restart,
-  so plan this step with the instance operator.
+- **Instance-wide** (unscoped tokens): franchise portal
+  (`https://www.d6e.ai/{locale}/account/franchise` → instance card →
+  **Redirect URIs**). Checked when the login page issues the code and
+  when the instance relays the code.
+- **Per-workspace** (workspace-scoped tokens): d6e console → Workspace
+  Settings → Integration → **Redirect URIs**. Use this when the frontend
+  sets `D6E_WORKSPACE_ID` and passes `d6e_workspace_id` on the authorize
+  URL (see the auth skill). Required when the same callback URL is
+  registered in more than one workspace.
+
+The instance no longer reads `ALLOWED_REDIRECT_URIS`; d6e-auth is the
+single validation authority for redirect URIs.
 
 ## Where Plugins fit (and where they don't)
 
@@ -174,8 +180,9 @@ repository and its
    installing your Plugin (`template.yaml`).
 3. **Deploy the frontend** — any static/SSR hosting works (this
    reference uses Vercel).
-4. **Register the deployed redirect URI** — on www.d6e.ai *and* in the
-   instance's `ALLOWED_REDIRECT_URIS`, then restart the instance.
+4. **Register the deployed redirect URI** — on d6e-auth (franchise
+   portal for instance-wide, or per-workspace Redirect URIs in the
+   console when using `D6E_WORKSPACE_ID`).
 5. **Operate** — tokens, policies, and membership are enforced by the
    instance per user; your frontend remains a stateless proxy plus UI.
 

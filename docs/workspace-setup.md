@@ -4,42 +4,33 @@
 prompt rule on a running d6e instance. Run it once per workspace before
 you use the AI Journal page.
 
-## Enabling end-user login (one-time allow-listing)
+## Enabling end-user login
 
-**Local development needs no allow-listing.** Loopback callback URLs
+**Local development needs no registration.** Loopback callback URLs
 (`localhost`, `127.0.0.0/8`, or `[::1]` — any port, any path) are always
-accepted by both validation layers, so `npm run dev` on any port logs in
-out of the box.
+accepted by d6e-auth, so `npm run dev` on any port logs in out of the box.
 
-Before anyone can log into a **deployed** copy of this app, its
-(non-loopback) OAuth callback URL must be allow-listed. Login is
+Before anyone can log into a **deployed** copy of this app, register its
+(non-loopback) OAuth callback URL on d6e-auth. Login is
 *instance-brokered*: `/auth/callback` exchanges the authorization code
 at the instance's own `${D6E_BASE_URL}/api/v1/auth/token`, which relays
-it to d6e-auth using the instance's client credentials. Two allow-lists
-must therefore include every deployed environment's callback URL:
+it to d6e-auth using the instance's client credentials. d6e-auth validates
+`redirect_uri` at both authorize and token exchange. Register every
+deployed environment's callback URL in one of these places:
 
-1. **d6e-auth `registered_client.redirectUris`** — add the callback URL
-   (e.g. `https://<deploy>/auth/callback`) to the redirect URIs of the
-   instance's own registered client on d6e-auth. This is self-service
-   for anyone with the **franchise owner/admin** role on the franchise
-   that registered the instance: open
-   `${D6E_AUTH_URL}/{locale}/account/franchise` (e.g.
-   `https://www.d6e.ai/ja-JP/account/franchise`), find the instance card
-   under *d6e Instance Connection*, and add the URL under **Redirect
-   URIs**. No d6e-auth platform admin is needed.
-2. **The instance's `ALLOWED_REDIRECT_URIS`** — set this env var on the
-   d6e instance to the same comma-separated list. The instance validates
-   the `redirect_uri` of the code exchange against the ORIGIN-derived
-   callback plus this list. Docker Compose already forwards it to the
-   `api` service via `env_file: .env`, so adding it to the instance's
-   `.env` is enough — no Compose edit required. This one is edited by
-   whoever operates the instance deployment. (Loopback URIs skip this
-   check on d6e api v0.20.1+; older instances still require explicit
-   localhost entries here.)
+1. **Per-workspace (self-service)** — a workspace admin adds each URL
+   (e.g. `https://<deploy>/auth/callback` for prod) in the d6e console:
+   Workspace Settings → Integration → **Redirect URIs**. Must be
+   absolute `https://` for deployed URLs. Tokens issued via these URIs
+   carry a `d6e_workspace_id` claim scoped to that workspace.
+2. **Instance-wide (franchise portal)** — add the URL to the instance's
+   `registered_client.redirectUris` on d6e-auth at
+   `${D6E_AUTH_URL}/{locale}/account/franchise`. These logins issue
+   unscoped tokens.
 
 Then set this app's `D6E_AUTH_CLIENT_ID` to the instance's own client id
-(no client secret is needed). Frontends that cannot change the instance's
-allow-list can use the standalone-client variant in
+(no client secret is needed). Frontends that cannot register a redirect
+URI on the instance can use the standalone-client variant in
 [`../skills/d6e-auth-integration/SKILL.md`](../skills/d6e-auth-integration/SKILL.md)
 instead.
 

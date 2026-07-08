@@ -82,13 +82,13 @@ flow with an **instance-brokered token exchange**:
 
 Because the exchange happens at the instance, the access token always
 carries the audience the d6e instance API requires; every later refresh
-hits the same instance endpoint. The instance only accepts redirect URIs
-on its allow-list, so the operator must add this app's callback to both
-the instance's `registered_client.redirectUris` on d6e-auth and the
-instance's `ALLOWED_REDIRECT_URIS`. A standalone-client variant (own
-d6e-auth client + two-stage re-mint) is documented in
-`skills/d6e-auth-integration/SKILL.md` for frontends that cannot edit
-that allow-list.
+hits the same instance endpoint. d6e-auth validates redirect URIs at
+authorize and token exchange against `registered_client.redirectUris`
+(instance-wide, franchise portal) and per-workspace registrations
+(Workspace Settings → Integration → **Redirect URIs**). A
+standalone-client variant (own d6e-auth client + two-stage re-mint) is
+documented in `skills/d6e-auth-integration/SKILL.md` for frontends that
+cannot register a redirect URI on the instance they use.
 
 Required env vars:
 
@@ -96,9 +96,11 @@ Required env vars:
   this app targets.
 - `D6E_AUTH_URL`, `D6E_AUTH_CLIENT_ID`, `D6E_AUTH_REDIRECT_URI` —
   d6e-auth login URL plus the d6e instance's own OAuth `client_id`
-  (no client secret). The instance's `registered_client.redirectUris`
-  on d6e-auth **and** its `ALLOWED_REDIRECT_URIS` must both include
-  `D6E_AUTH_REDIRECT_URI` exactly before logins work.
+  (no client secret). A deployed (non-loopback) `D6E_AUTH_REDIRECT_URI`
+  must be registered on d6e-auth — instance-wide in
+  `registered_client.redirectUris` (franchise portal) or per-workspace
+  in Workspace Settings → Integration → **Redirect URIs** — before
+  logins work. Loopback callbacks need no registration.
 - `D6E_INIT_REFRESH_TOKEN` — admin-only refresh token used **only** by
   `scripts/init-workspace.mjs` to POST the workspace prompt rule.
   Separate from the end-user `auth-refresh` cookie.
