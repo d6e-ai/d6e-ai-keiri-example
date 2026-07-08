@@ -19,7 +19,7 @@ The access token comes from `event.locals.accessToken`, which
 
 **Request:** `multipart/form-data` with one `file` field carrying the
 raw file bytes and one `metadata` field containing a JSON-encoded
-object (this app sends `{"source":"d6e-ai-keiri-example"}`).
+object (this app sends `{"source":"d6e-custom-frontend-skills"}`).
 
 **Response (JSON):**
 
@@ -44,7 +44,7 @@ removes a queued file before pressing "Generate journal",
 forwards a DELETE to the same Rust endpoint to clean up the orphan.
 
 **Upstream reference:**
-[d6e `packages/frontend/src/routes/api/workspaces/[workspaceId]/files/upload/+server.ts`](https://github.com/d6e-ai/d6e/blob/main/packages/frontend/src/routes/api/workspaces/%5BworkspaceId%5D/files/upload/+server.ts)
+[d6e `packages/frontend/src/routes/api/workspaces/[workspaceId]/files/upload/+server.ts`](https://gitlab.com/cauchye/d6e-ai/d6e/-/blob/main/packages/frontend/src/routes/api/workspaces/%5BworkspaceId%5D/files/upload/+server.ts)
 (the d6e frontend's own proxy of the same Rust endpoint).
 
 ## 2. Natural-language workflow — `/api/workflows/execute-by-intent`
@@ -108,7 +108,164 @@ uses [`executeByIntent()`](../src/lib/server/d6e-client.ts) to relay the
 upstream response unchanged.
 
 **Upstream reference:**
-[d6e `packages/frontend/src/routes/api/workflows/execute-by-intent/+server.ts`](https://github.com/d6e-ai/d6e/blob/main/packages/frontend/src/routes/api/workflows/execute-by-intent/+server.ts).
+[d6e `packages/frontend/src/routes/api/workflows/execute-by-intent/+server.ts`](https://gitlab.com/cauchye/d6e-ai/d6e/-/blob/main/packages/frontend/src/routes/api/workflows/execute-by-intent/+server.ts).
+
+## 2b. Async intent jobs — `/api/workflows/execute-by-intent/jobs`
+
+> Introduced in d6e `feat/async-intent-jobs`. Available on d6e instances
+> running this version or later.
+
+The synchronous `execute-by-intent` endpoint (section 2) holds the HTTP
+connection open for the entire agent run. For heavy runs (data fetch +
+LLM + STFs + file generation), this can exceed 13 minutes — longer than
+Vercel's `maxDuration` limit (~800s on Fluid Compute). The async job API
+removes this ceiling by detaching the agent run from the HTTP request
+lifetime.
+
+The d6e frontend runs as a long-lived `adapter-node` process (Docker
+container), so the agent run continues in the background indefinitely
+(up to a configurable wall-clock cap, default 30 minutes).
+
+### Endpoints
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/api/workflows/execute-by-intent/jobs` | Create a job; returns `jobId` immediately |
+| `GET` | `/api/workflows/execute-by-intent/jobs/{id}` | Poll status, tool trace, and result |
+| `POST` | `/api/workflows/execute-by-intent/jobs/{id}/cancel` | Request cooperative cancellation |
+
+All three use `Authorization: Bearer <access_token>`.
+
+### Create job — `POST /jobs`
+
+**Request body (JSON):**
+
+```json
+{
+	"workspaceId": "<UUID>",
+	"message": "領収書を仕訳に変換してください",
+	"inputFileRefs": [
+		{
+			"fileId": "<UUID from Storage>",
+			"filename": "receipt.jpg",
+			"mimeType": "image/jpeg",
+			"sizeBytes": 124300
+		}
+	],
+	"conversationContext": "<optional prior conversation text>"
+}
+```
+
+Notes:
+
+- `workspaceId` is required and validated as a UUID.
+- `inputFileRefs` and `conversationContext` are optional.
+- Returns immediately with HTTP 200 (not 202 — the row is created
+  synchronously).
+
+**Response (JSON):**
+
+```json
+{
+	"jobId": "019bbac4-68a4-71d3-8928-8b32cabec841"
+}
+```
+
+**Error codes:**
+
+- `401` — Missing or invalid Authorization header.
+- `403` — User not authorized for the workspace.
+- `422` — Invalid request body.
+- `429` — Workspace at the per-workspace concurrency cap (default 3).
+- `500` — Internal error.
+
+### Poll status — `GET /jobs/{id}`
+
+**Response (JSON):**
+
+```json
+{
+	"id": "019bbac4-68a4-71d3-8928-8b32cabec841",
+	"status": "running",
+	"toolTrace": [
+		{
+			"tool": "d6e_execute_workflow",
+			"startedAt": "2025-01-15T10:30:00Z",
+			"finishedAt": "2025-01-15T10:30:45Z"
+		},
+		{
+			"tool": "d6e_instant_run_stf",
+			"startedAt": "2025-01-15T10:30:46Z"
+		}
+	],
+	"startedAt": "2025-01-15T10:30:00Z",
+	"finishedAt": null,
+	"elapsedMs": 46000,
+	"result": null,
+	"error": null
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `status` | `'queued' \| 'running' \| 'succeeded' \| 'failed' \| 'cancelled'` | Current job state |
+| `toolTrace` | `ToolTraceEntry[]` | Capped array of tool invocations (progress display) |
+| `startedAt` | `string \| null` | ISO timestamp when the runner claimed the job |
+| `finishedAt` | `string \| null` | ISO timestamp when the job reached a terminal state |
+| `elapsedMs` | `number \| null` | Elapsed wall-clock time (running: since start; finished: total) |
+| `result` | `IntentResponse \| null` | Present when `status === 'succeeded'` — same shape as section 2 |
+| `error` | `string \| null` | Present when `status === 'failed'` or `'cancelled'` |
+
+**Error codes:** `401`, `403`, `404`.
+
+### Cancel — `POST /jobs/{id}/cancel`
+
+**Response (JSON):**
+
+```json
+{
+	"cancelled": true
+}
+```
+
+Returns `{ "cancelled": false }` when the job is not in `running` state
+(already finished or still queued). The cancellation is **cooperative**:
+the runner checks a `cancel_requested` flag on its next heartbeat tick
+(~10s interval) and aborts the agent loop via `AbortController`. The
+job status will transition to `cancelled` shortly after.
+
+### Guardrails
+
+| Guardrail | Default | Description |
+|-----------|---------|-------------|
+| Wall-clock cap | 30 min | `AbortController` timeout; configurable via `INTENT_JOB_TIMEOUT_MS` |
+| Step cap | 50 | `AGENT_RECURSION_LIMIT` (shared with sync endpoint) |
+| Heartbeat stale | 60s | A running job whose heartbeat is older than this is assumed dead |
+| Workspace concurrency | 3 | Max running jobs per workspace; excess submissions get 429 |
+| Tool trace cap | 100 | Max entries in the `toolTrace` array |
+
+### Integration pattern
+
+For frontends on Vercel (or any platform with a function timeout):
+
+1. **Submit:** `POST /jobs` — returns `jobId` immediately.
+2. **Poll:** `GET /jobs/{id}` at 3–5s intervals until `status` is
+   terminal (`succeeded`, `failed`, `cancelled`).
+3. **Display progress:** show `toolTrace` entries and `elapsedMs` while
+   polling.
+4. **Cancel:** `POST /jobs/{id}/cancel` when the user clicks a cancel
+   button.
+5. **Finalize:** on `succeeded`, read `result` (same `IntentResponse`
+   shape as the sync endpoint). On `failed`/`cancelled`, display
+   `error`.
+
+The sync `POST /api/workflows/execute-by-intent` endpoint continues to
+work and is still the right choice for SNS bots (Slack/Discord/LINE)
+where the integration is simpler and the agent run fits within the
+caller's timeout budget.
+
+**Upstream reference:**
+[d6e `packages/frontend/src/routes/api/workflows/execute-by-intent/jobs/`](https://gitlab.com/cauchye/d6e-ai/d6e/-/blob/main/packages/frontend/src/routes/api/workflows/execute-by-intent/jobs/).
 
 ## 3. Workspace prompt rule — `/api/workspace-prompt-rules`
 
@@ -147,7 +304,7 @@ the d6e frontend's admin UI for now.
 `scripts/prompts/ai-keiri-prompt.md` and POSTs it once.
 
 **Upstream reference:**
-[d6e `packages/frontend/src/routes/api/workspace-prompt-rules/+server.ts`](https://github.com/d6e-ai/d6e/blob/main/packages/frontend/src/routes/api/workspace-prompt-rules/+server.ts).
+[d6e `packages/frontend/src/routes/api/workspace-prompt-rules/+server.ts`](https://gitlab.com/cauchye/d6e-ai/d6e/-/blob/main/packages/frontend/src/routes/api/workspace-prompt-rules/+server.ts).
 
 ## 4. End-user OAuth2 — instance-brokered token exchange
 
@@ -193,8 +350,9 @@ injects its own when it forwards the grant to d6e-auth. The `redirect_uri`
 must be present (d6e-auth requires it for the authorization_code grant)
 and registered on d6e-auth — instance-wide in
 `registered_client.redirectUris` or per-workspace via Workspace Settings
-→ Integration → **Redirect URIs**. The instance relays `redirect_uri`
-unchanged and does not validate it.
+→ Integration → **Redirect URIs**. Loopback values (localhost /
+127.0.0.0/8 / [::1], any port) are always accepted. The instance relays
+`redirect_uri` unchanged and does not validate it.
 
 The d6e instance returns a token pair signed for its own audience, and
 **this pair is written straight to the user's cookies**. All subsequent
@@ -261,7 +419,7 @@ exchange again, and the user would end up logged in within ~200 ms
 of clicking "logout".
 
 `d6e-auth`'s logout endpoint reference:
-[d6e-auth `src/routes/auth/logout/+server.ts`](https://github.com/d6e-ai/d6e-auth/blob/main/src/routes/auth/logout/+server.ts).
+[d6e-auth `src/routes/auth/logout/+server.ts`](https://gitlab.com/cauchye/d6e-ai/d6e-auth/-/blob/main/src/routes/auth/logout/+server.ts).
 
 ### Workspace allow-list
 
@@ -406,9 +564,9 @@ pastes the activation file again.
 
 **Upstream references:**
 
-- MCP tool descriptor: [d6e `packages/mcp/src/server/mod.rs`](https://github.com/d6e-ai/d6e/blob/main/packages/mcp/src/server/mod.rs)
-- Proxy implementation: [d6e `packages/api/src/routes/v1/saas_proxy.rs`](https://github.com/d6e-ai/d6e/blob/main/packages/api/src/routes/v1/saas_proxy.rs)
-- Provider catalog: [d6e `packages/frontend/src/lib/saas-providers/catalog.ts`](https://github.com/d6e-ai/d6e/blob/main/packages/frontend/src/lib/saas-providers/catalog.ts)
+- MCP tool descriptor: [d6e `packages/mcp/src/server/mod.rs`](https://gitlab.com/cauchye/d6e-ai/d6e/-/blob/main/packages/mcp/src/server/mod.rs)
+- Proxy implementation: [d6e `packages/api/src/routes/v1/saas_proxy.rs`](https://gitlab.com/cauchye/d6e-ai/d6e/-/blob/main/packages/api/src/routes/v1/saas_proxy.rs)
+- Provider catalog: [d6e `packages/frontend/src/lib/saas-providers/catalog.ts`](https://gitlab.com/cauchye/d6e-ai/d6e/-/blob/main/packages/frontend/src/lib/saas-providers/catalog.ts)
 
 ## Auth model summary
 
@@ -418,6 +576,7 @@ pastes the activation file again.
 | `DELETE /api/v1/workspaces/{id}/files/{fileId}`       | `Authorization: Bearer <access_token>` | same as above                                                           |
 | `GET /api/v1/workspaces/{id}`                         | `Authorization: Bearer <access_token>` | same as above (only called from `/auth/callback`)                       |
 | `POST /api/workflows/execute-by-intent`               | `Authorization: Bearer <access_token>` | same as above                                                           |
+| `* /api/workflows/execute-by-intent/jobs[/{id}[/cancel]]` | `Authorization: Bearer <access_token>` | same as above — async job API (create / poll / cancel)                  |
 | `/api/chat-sessions[*]`                               | `Cookie: auth-token=<access_token>`    | same as above (re-emitted as a server-to-server cookie)                 |
 | `POST ${D6E_BASE_URL}/api/v1/auth/token` (user, code exchange) | JSON `code` + `redirect_uri`  | OAuth2 authorization code from `/auth/callback`; instance brokers it to d6e-auth |
 | `POST ${D6E_BASE_URL}/api/v1/auth/token` (user, refresh) | JSON `refresh_token`               | rotated `auth-refresh` cookie value                                     |

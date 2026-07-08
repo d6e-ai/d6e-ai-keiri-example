@@ -1,22 +1,66 @@
-# d6e-ai-keiri-example
+# d6e-custom-frontend-skills
 
-An example AI accounting application that demonstrates how to build a thin
-frontend on top of the [d6e](https://github.com/d6e-ai/d6e) platform's
-`/api/workflows/execute-by-intent` endpoint.
+A reusable [Agent Skills](./skills/README.md) package for building
+custom frontends on top of the [d6e](https://gitlab.com/cauchye/d6e-ai/d6e)
+platform — paired with a working reference implementation: a thin
+AI accounting (AI 経理 / keiri) frontend that demonstrates how to
+call d6e's `/api/workflows/execute-by-intent` endpoint end-to-end.
 
-## What this app does
+This repository serves two audiences:
+
+1. **AI agents / developers building their own d6e-connected
+   frontends** → consume the three skills under [`skills/`](./skills/)
+   (OAuth2 login, server-side workspace API proxy, and prompt-driven
+   JSON UI contracts).
+2. **Developers learning by example** → read the SvelteKit app under
+   [`src/`](./src/), which is the reference implementation each skill
+   cites.
+
+## Agent Skills
+
+The primary deliverable of this repository is a set of three reusable
+[Agent Skills](./skills/README.md) that teach AI agents how to build
+their own d6e-connected frontends. Each skill is self-contained — pick
+the ones you need.
+
+| Skill                                                                    | Concern                                                                                                                                                                  |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [`d6e-auth-integration`](./skills/d6e-auth-integration/SKILL.md)         | Instance-brokered OAuth2 login (plus a standalone-client alternative), session cookies, transparent refresh, workspace allow-list.                                       |
+| [`d6e-workspace-api-client`](./skills/d6e-workspace-api-client/SKILL.md) | Bearer vs cookie header matrix, the `caller + accessToken + AbortSignal` wrapper convention in `src/lib/server/d6e-client.ts`, async intent job API (create / poll / cancel for long-running runs), and the idempotent prompt-rule bootstrap. |
+| [`d6e-prompt-driven-ui`](./skills/d6e-prompt-driven-ui/SKILL.md)         | `kind`-discriminated JSON inside fenced code blocks, Zod parse with markdown fallback, XML-tag revision flows, scenario-append activation via the d6e chat UI.           |
+
+### Install in your agent
+
+```bash
+npx skills add https://gitlab.com/cauchye/d6e-ai/d6e-custom-frontend-skills --skill d6e-auth-integration
+npx skills add https://gitlab.com/cauchye/d6e-ai/d6e-custom-frontend-skills --skill d6e-workspace-api-client
+npx skills add https://gitlab.com/cauchye/d6e-ai/d6e-custom-frontend-skills --skill d6e-prompt-driven-ui
+```
+
+Once installed, the agent can guide you end-to-end through wiring an
+OAuth2 login, building the `/api/*` proxy layer, and authoring the
+workspace prompt rule that drives a structured-JSON UI — the same
+architecture the reference app below demonstrates.
+
+The [skills CLI](https://skills.sh) discovers the
+`skills/<name>/SKILL.md` files in this repository directly from the
+GitLab URL above. This repository is hosted on GitLab, so the full URL
+is required — the `owner/repo` shorthand only resolves against
+github.com and does not work here.
+
+## What the reference app does
 
 The user signs in with their own d6e-auth account, uploads one or more
 receipt images, presses "Generate journal", and the AI produces a
 freee-compatible journal entry. The user revises it with free-form
 Japanese until it looks right. There is no real accounting backend —
-this repository exists to show how to wire up d6e for a single-purpose
-vertical app, including the OAuth2 login flow.
+the app exists to show how to wire up d6e for a single-purpose vertical
+app, including the OAuth2 login flow.
 
 ````mermaid
 sequenceDiagram
     participant User as Browser
-    participant App as d6e-ai-keiri-example (this app)
+    participant App as d6e-custom-frontend-skills (this app)
     participant Auth as d6e-auth (www.d6e.ai)
     participant Files as d6e API (files)
     participant Intent as d6e SvelteKit (/api/workflows/execute-by-intent)
@@ -93,14 +137,14 @@ npm install
 
 Copy `.env.example` to `.env` and fill in the values:
 
-| Variable                 | Used by                                            | How to obtain                                                                                               |
-| ------------------------ | -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `D6E_BASE_URL`           | `/api/upload`, `/api/intent`, `/api/chat-sessions` | Base URL of the d6e instance (e.g. `https://your-d6e-instance.example.com`)                                 |
-| `D6E_WORKSPACE_ID`       | all calls                                          | UUID of the d6e workspace this app should operate on                                                        |
-| `D6E_AUTH_URL`           | `/auth/login`, `/auth/callback`, refresh           | Base URL of the d6e-auth instance (e.g. `https://www.d6e.ai`)                                               |
-| `D6E_AUTH_CLIENT_ID`     | server-side OAuth                                  | The d6e **instance's** own OAuth `client_id` (mirror its `D6E_AUTH_CLIENT_ID`); no client secret needed     |
-| `D6E_AUTH_REDIRECT_URI`  | `/auth/login`, `/auth/callback`                    | Callback URL exposed by this app (e.g. `http://localhost:5173/auth/callback`). Allow-listed on the instance |
-| `D6E_INIT_REFRESH_TOKEN` | `npm run init` only                                | Long-lived `auth-refresh` cookie value from a workspace-ADMIN browser session on `D6E_BASE_URL`             |
+| Variable                 | Used by                                            | How to obtain                                                                                                                                          |
+| ------------------------ | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `D6E_BASE_URL`           | `/api/upload`, `/api/intent`, `/api/chat-sessions` | Base URL of the d6e instance (e.g. `https://your-d6e-instance.example.com`) — the origin of the d6e console you already use                            |
+| `D6E_WORKSPACE_ID`       | all calls                                          | Workspace settings page (`{D6E_BASE_URL}/{locale}/workspaces/{id}/settings`) → Integration section copy button, or the UUID in any workspace URL       |
+| `D6E_AUTH_URL`           | `/auth/login`, `/auth/callback`, refresh           | Base URL of the d6e-auth instance (e.g. `https://www.d6e.ai`) — where the console redirects you when signed out                                        |
+| `D6E_AUTH_CLIENT_ID`     | server-side OAuth                                  | Same Integration section on the settings page ("Client ID", visible to workspace **admins** only); it is the instance's own client id, no secret needed |
+| `D6E_AUTH_REDIRECT_URI`  | `/auth/login`, `/auth/callback`                    | Callback URL exposed by this app (e.g. `http://localhost:5173/auth/callback`). Loopback URLs (localhost, any port) work with no registration; deployed URLs must be registered on d6e-auth — per-workspace in Workspace Settings → Integration → **Redirect URIs** (workspace admin) or instance-wide in the franchise portal — see [docs/workspace-setup.md](./docs/workspace-setup.md) |
+| `D6E_INIT_REFRESH_TOKEN` | `npm run init` only                                | Long-lived `auth-refresh` cookie value from a workspace-ADMIN browser session on `D6E_BASE_URL`                                                        |
 
 > Managed d6e deployments expose the Rust API (`/api/v1/...`) and the
 > SvelteKit frontend (everything else) on the same origin via a reverse
@@ -109,16 +153,18 @@ Copy `.env.example` to `.env` and fill in the values:
 > dedicated accessor in `src/lib/server/env.ts` and update the callers
 > in `src/lib/server/d6e-client.ts`.
 
-> **Before logins work**, register this app's callback URL on d6e-auth.
-> The code exchange is brokered by the instance, so this app needs no
-> client secret of its own:
+> **Local development logs in with no registration** — loopback
+> callbacks (localhost, any port) are always accepted. Before logins
+> work on a **deployed** copy, register this app's callback URL on
+> d6e-auth. The code exchange is brokered by the instance, so this app
+> needs no client secret of its own:
 >
 > 1. **Per-workspace (self-service):** a workspace admin adds each
->    environment's callback URL (e.g. `http://localhost:5173/auth/callback`
->    for dev, `https://<your-deploy>.vercel.app/auth/callback` for prod)
->    in the d6e console: Workspace Settings → Integration → **Redirect
+>    deployed environment's callback URL (e.g.
+>    `https://<your-deploy>.vercel.app/auth/callback` for prod) in the
+>    d6e console: Workspace Settings → Integration → **Redirect
 >    URIs**. Tokens issued via these URIs are workspace-scoped
->    (`d6e_workspace_id` claim). Loopback URIs need no registration.
+>    (`d6e_workspace_id` claim).
 > 2. **Instance-wide (franchise portal):** add the same URL(s) to the
 >    instance's `registered_client.redirectUris` on d6e-auth at
 >    `${D6E_AUTH_URL}/{locale}/account/franchise` (unscoped tokens).
@@ -194,44 +240,21 @@ or parent folder later.
 
 ## Documentation
 
+- [`docs/frontend-and-instance.md`](./docs/frontend-and-instance.md) — how a custom frontend, the d6e instance, and www.d6e.ai relate (start here / 日本語版: [`frontend-and-instance.ja.md`](./docs/frontend-and-instance.ja.md))
 - [`docs/architecture.md`](./docs/architecture.md) — request flow and directory layout
 - [`docs/d6e-api-integration.md`](./docs/d6e-api-integration.md) — exact request/response payloads
 - [`docs/workspace-setup.md`](./docs/workspace-setup.md) — `npm run init` deep dive
 - [`docs/llm-output-contract.md`](./docs/llm-output-contract.md) — JSON schema, scenarios, parse fallback
 - [`docs/migration-to-full-integration.md`](./docs/migration-to-full-integration.md) — roadmap toward the full d6e-auth/STF integration (C-case)
 
-## Agent Skills
-
-This repository doubles as a reusable Agent Skill package. Three
-[`skills/`](./skills/README.md) entries teach AI agents (Claude /
-Cursor / etc.) how to build their own d6e-connected frontends using
-this codebase as a reference:
-
-| Skill                                                                    | Concern                                                                                                                                                                  |
-| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| [`d6e-auth-integration`](./skills/d6e-auth-integration/SKILL.md)         | Instance-brokered OAuth2 login (plus a standalone-client alternative), session cookies, transparent refresh, workspace allow-list.                                       |
-| [`d6e-workspace-api-client`](./skills/d6e-workspace-api-client/SKILL.md) | Bearer vs cookie header matrix, the `caller + accessToken + AbortSignal` wrapper convention in `src/lib/server/d6e-client.ts`, and the idempotent prompt-rule bootstrap. |
-| [`d6e-prompt-driven-ui`](./skills/d6e-prompt-driven-ui/SKILL.md)         | `kind`-discriminated JSON inside fenced code blocks, Zod parse with markdown fallback, XML-tag revision flows, scenario-append activation via the d6e chat UI.           |
-
-Install in your agent:
-
-```bash
-npx skills add https://gitlab.com/d6e-ai/d6e-ai-keiri-example --skill d6e-auth-integration
-npx skills add https://gitlab.com/d6e-ai/d6e-ai-keiri-example --skill d6e-workspace-api-client
-npx skills add https://gitlab.com/d6e-ai/d6e-ai-keiri-example --skill d6e-prompt-driven-ui
-```
-
-The [skills CLI](https://skills.sh) discovers the
-`skills/<name>/SKILL.md` files in this repository directly from the
-GitLab URL above. This repository is hosted on GitLab, so the full URL
-is required — the `owner/repo` shorthand only resolves against
-github.com and does not work here.
-
 ## Status & caveats
 
-- `/api/workflows/execute-by-intent` is internal to d6e and has no
-  stability guarantee. If the upstream contract changes, this app will
-  need to follow.
+- `/api/workflows/execute-by-intent` (synchronous) and
+  `/api/workflows/execute-by-intent/jobs` (async job API) are internal
+  to d6e and have no stability guarantee. If the upstream contract
+  changes, this app will need to follow. The async job API is
+  recommended for Vercel-hosted frontends where heavy agent runs
+  exceed the platform's `maxDuration` limit.
 - This example uses a single shared workspace per deployment. Every
   user must be a member of `D6E_WORKSPACE_ID`; non-members are blocked
   at `/auth/no-access` after login.

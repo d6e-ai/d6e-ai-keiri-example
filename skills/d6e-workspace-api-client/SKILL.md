@@ -1,6 +1,6 @@
 ---
 name: d6e-workspace-api-client
-description: Builds the server-side proxy layer that lets a custom frontend talk to a d6e workspace — file upload, file delete, workflow execution via `execute-by-intent`, chat-session CRUD, workspace prompt rule registration, and workspace membership probes. Use when adding a new `/api/*` route that talks to d6e, when designing a fetch wrapper that needs to surface timeouts/aborts cleanly, when seeing 401 on `/api/chat-sessions`, or when writing a bootstrap script that registers workspace prompt rules idempotently.
+description: Builds the server-side proxy layer that lets a custom frontend talk to a d6e workspace — file upload, file delete, workflow execution via `execute-by-intent` (synchronous and async job API), chat-session CRUD, workspace prompt rule registration, workspace membership probes, SaaS API calls via the d6e saas-proxy, Google Drive sync mirror endpoints, and workspace pending-invitation admin CRUD. Use when adding a new `/api/*` route that talks to d6e, when designing a fetch wrapper that needs to surface timeouts/aborts cleanly, when seeing 401 on `/api/chat-sessions` or 402 from `execute-by-intent`, when the synchronous execute-by-intent times out and you need the async job API, when building a progress display with tool-trace polling, when adding a cancel button for long-running AI jobs, when calling freee/Google/Notion APIs with workspace-stored credentials, when writing a bootstrap script that registers workspace prompt rules idempotently, when wiring a Drive Sync UI (config / roots / sync / materialize / picker), or when building an admin members page that needs to list and cancel pending email invitations.
 ---
 
 # d6e Workspace API Client
@@ -24,6 +24,29 @@ frontend and a d6e workspace. It covers:
   bodies that are easy to miss.
 - The SHA-256-keyed idempotency pattern that `scripts/init-workspace.mjs`
   uses so `npm run init` can be re-run safely.
+- The **SaaS proxy** (`POST /api/v1/saas-proxy`) that lets server code
+  call freee / Google Workspace / Notion / GitHub / Salesforce / Box /
+  MoneyForward / Chatwork / Zendesk APIs with the workspace's stored
+  credential — after a workspace admin connects the provider in the
+  d6e console's settings page (there is no API for that step).
+- The **async intent job API** (`/api/workflows/execute-by-intent/jobs`)
+  that removes the ~13-minute synchronous ceiling. The caller posts a
+  job (returns immediately with a `jobId`), then polls for status, tool
+  trace, and result independently of the HTTP connection lifetime. The
+  d6e instance runs the agent loop in the background (long-lived
+  adapter-node process) with a configurable wall-clock cap (default 30
+  minutes). This is the recommended path for Vercel-hosted frontends
+  where the sync endpoint exceeds `maxDuration`.
+- Optional integrations newer d6e instances expose:
+  - **Google Drive Sync Mirror** under `/api/v1/drive-sync/*` — Bearer
+    endpoints whose `workspace_id` is supplied in the body or query
+    string (not in the URL path). Backs a `drive_files` SQL projection
+    that LLMs can query via `d6e_sql` and on-demand `materialize` /
+    `read` actions that cache Drive bytes into `storage_file`.
+  - **Workspace Pending Invitations** under
+    `/api/v1/workspaces/{id}/invitations` — admin-only Bearer CRUD that
+    lets a custom admin UI list and cancel email invitations made to
+    users who have not yet signed in to the d6e instance.
 
 ## When to Use
 
@@ -37,6 +60,16 @@ Apply this skill when the user says:
 - "Proxy `execute-by-intent` from my SvelteKit/Next.js backend"
 - "サーバ側で d6e API を叩く層を作りたい"
 - "Where do I plumb the workspace ID through?"
+- "Add a Google Drive sync UI to my custom frontend"
+- "Trigger a Drive sync from my app" / "Drive 同期ボタンを実装したい"
+- "List and cancel pending workspace invitations" / "保留招待を管理 UI から扱いたい"
+- "Why does `/api/v1/drive-sync/sync` accept the workspace id in the body but not in the URL?"
+- "Call the freee / Google Drive API with the workspace's stored credential" / "SaaS 連携の API をサーバ側から叩きたい"
+- "Why does execute-by-intent return 402?"
+- "execute-by-intent keeps timing out on Vercel" / "780s タイムアウトを回避したい"
+- "How do I use the async job API?" / "非同期ジョブ API を使いたい"
+- "Add a cancel button for running jobs" / "実行中のジョブをキャンセルしたい"
+- "Show progress (tool trace) while a job is running"
 
 ## Core Concepts
 
@@ -60,19 +93,36 @@ cookies and never reaches client-side JavaScript.
 
 ### Authentication header matrix
 
-| Endpoint                                                         | Auth                                                     | Notes                                                         |
-| ---------------------------------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------- |
-| `POST ${D6E_BASE_URL}/api/v1/workspaces/{wsId}/files/multipart`  | `Authorization: Bearer <jwt>` + `X-Workspace-ID: <wsId>` | `multipart/form-data` body with `file` + `metadata` fields    |
-| `DELETE ${D6E_BASE_URL}/api/v1/workspaces/{wsId}/files/{fileId}` | `Authorization: Bearer <jwt>` + `X-Workspace-ID: <wsId>` | 404 is treated as success (already gone)                      |
-| `GET ${D6E_BASE_URL}/api/v1/workspaces/{wsId}`                   | `Authorization: Bearer <jwt>`                            | Workspace membership probe (returns 200/403/404)              |
-| `POST ${D6E_BASE_URL}/api/workflows/execute-by-intent`           | `Authorization: Bearer <jwt>`                            | Body contains `workspaceId` — set server-side                 |
-| `POST ${D6E_BASE_URL}/api/v1/auth/token`                         | none (refresh token in body)                             | Stage 2 / refresh — see auth skill                            |
-| `* ${D6E_BASE_URL}/api/chat-sessions[/...]`                      | `Cookie: auth-token=<jwt>`                               | Bearer is rejected; the SvelteKit handler reads `locals.user` |
-| `POST ${D6E_BASE_URL}/api/workspace-prompt-rules`                | `Cookie: auth-token=<jwt>`                               | Requires admin role on the workspace                          |
-| `GET ${D6E_BASE_URL}/api/workspace-prompt-rules?workspaceId=…`   | `Cookie: auth-token=<jwt>`                               | Used for idempotent rule registration                         |
+| Endpoint                                                           | Auth                                                     | Notes                                                                                                                                               |
+| ------------------------------------------------------------------ | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST ${D6E_BASE_URL}/api/v1/workspaces/{wsId}/files/multipart`    | `Authorization: Bearer <jwt>` + `X-Workspace-ID: <wsId>` | `multipart/form-data` body with `file` + `metadata` fields                                                                                          |
+| `DELETE ${D6E_BASE_URL}/api/v1/workspaces/{wsId}/files/{fileId}`   | `Authorization: Bearer <jwt>` + `X-Workspace-ID: <wsId>` | 404 is treated as success (already gone)                                                                                                            |
+| `GET ${D6E_BASE_URL}/api/v1/workspaces/{wsId}`                     | `Authorization: Bearer <jwt>`                            | Workspace membership probe (returns 200/403/404)                                                                                                    |
+| `* ${D6E_BASE_URL}/api/v1/workspaces/{wsId}/invitations[/{id}]`    | `Authorization: Bearer <jwt>` (admin role required)      | GET list / DELETE single. See [Workspace invitation admin endpoints](#workspace-invitation-admin-endpoints).                                        |
+| `POST ${D6E_BASE_URL}/api/workflows/execute-by-intent`             | `Authorization: Bearer <jwt>`                            | Body contains `workspaceId` — set server-side                                                                                                       |
+| `* ${D6E_BASE_URL}/api/workflows/execute-by-intent/jobs[/{id}[/cancel]]` | `Authorization: Bearer <jwt>`                    | Async job API — create / poll / cancel. Body contains `workspaceId` on POST (create). See [Async intent job API](#async-intent-job-api).             |
+| `POST ${D6E_BASE_URL}/api/v1/auth/token`                           | none (refresh token in body)                             | Stage 2 / refresh — see auth skill                                                                                                                  |
+| `* ${D6E_BASE_URL}/api/v1/drive-sync/{config,roots,sync,status,…}` | `Authorization: Bearer <jwt>`                            | `workspace_id` is supplied in the **body or query string**, never in the URL path. See [Drive Sync mirror endpoints](#drive-sync-mirror-endpoints). |
+| `POST ${D6E_BASE_URL}/api/v1/saas-proxy`                           | `Authorization: Bearer <jwt>`                            | Proxied SaaS API call using the workspace's stored credential. See [SaaS API calls](#saas-api-calls-through-the-d6e-proxy).                          |
+| `* ${D6E_BASE_URL}/api/chat-sessions[/...]`                        | `Cookie: auth-token=<jwt>`                               | Bearer is rejected; the SvelteKit handler reads `locals.user`                                                                                       |
+| `POST ${D6E_BASE_URL}/api/workspace-prompt-rules`                  | `Cookie: auth-token=<jwt>`                               | Requires admin role on the workspace. `GET` (list) is also admin-only                                                                               |
+| `GET ${D6E_BASE_URL}/api/workspace-prompt-rules?workspaceId=…`     | `Cookie: auth-token=<jwt>`                               | Used for idempotent rule registration                                                                                                               |
 
 The Bearer JWT and the `auth-token` cookie value are the **same**
-string — only the transport differs.
+string — only the transport differs. Drive Sync and invitation routes
+both share the Bearer transport but enforce different authorisation
+gates (workspace-member for Drive Sync, workspace-admin for
+invitations).
+
+For local development and smoke tests (curl, scripts, or a local AI
+coding agent calling `${D6E_BASE_URL}` directly), a long-lived **API
+key** (`d6e_...`, created in the d6e console: avatar in the header →
+API Keys) works everywhere the table says `Authorization: Bearer <jwt>`
+— it carries the same user identity without the ~1 h JWT expiry. The
+cookie-transport routes (`/api/chat-sessions`,
+`/api/workspace-prompt-rules`) still need the real session cookie. See
+[local-ai-development.md](https://gitlab.com/cauchye/d6e-ai/d6e-plugin-skills/-/blob/main/docs/local-ai-development.md)
+for the full local-development workflow.
 
 ### Fetch wrapper conventions
 
@@ -255,7 +305,10 @@ press.
 | -------------------------------------------------------------------------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `uploadFile(caller, accessToken, payload)`                                 | Bearer + `X-Workspace-ID` | Uploads bytes to file storage. Returns `{ id, filename, contentType, sizeBytes }`.                                                                                                       |
 | `deleteFile(caller, accessToken, fileId)`                                  | Bearer + `X-Workspace-ID` | Best-effort delete. 404 counts as success.                                                                                                                                               |
-| `executeByIntent(caller, accessToken, body, options?)`                     | Bearer                    | Runs the natural-language workflow. Body is `{ message, inputFileRefs? }`; the wrapper injects `workspaceId`. Supports `timeoutMs` (default 270s, below Vercel's 300s cap) and `signal`. |
+| `executeByIntent(caller, accessToken, body, options?)`                     | Bearer                    | Runs the natural-language workflow **synchronously**. Body is `{ message, inputFileRefs? }`; the wrapper injects `workspaceId`. Supports `timeoutMs` (default 270s, below Vercel's 300s cap) and `signal`. For long-running runs, prefer the async job API below. |
+| `createAsyncIntentJob(caller, accessToken, body)`                          | Bearer                    | Creates an async job and returns `{ jobId }` immediately. Body is `{ message, inputFileRefs?, conversationContext? }`; the wrapper injects `workspaceId`. See [Async intent job API](#async-intent-job-api). |
+| `getAsyncIntentJobStatus(caller, accessToken, jobId)`                      | Bearer                    | Polls the status of an async job. Returns the full `AsyncJobStatusResponse` (status, toolTrace, result, error). |
+| `cancelAsyncIntentJob(caller, accessToken, jobId)`                         | Bearer                    | Requests cooperative cancellation. Returns `{ cancelled: boolean }`. |
 | `verifyWorkspaceMembership(caller, accessToken)`                           | Bearer                    | 200 = `true`, 403/404 = `false`, other status throws `D6eClientError`.                                                                                                                   |
 | `listChatSessions(caller, accessToken, workspaceId)`                       | Cookie                    | Returns `ChatSessionRow[]`.                                                                                                                                                              |
 | `getChatSessionById(caller, accessToken, sessionId)`                       | Cookie                    | Fetch one row.                                                                                                                                                                           |
@@ -340,6 +393,134 @@ The response shape:
 is the responsibility of the [`d6e-prompt-driven-ui`](../d6e-prompt-driven-ui/SKILL.md)
 skill.
 
+### Async intent job API
+
+> Available on d6e instances running `feat/async-intent-jobs` or later.
+> See also [docs/d6e-api-integration.md §2b](../../docs/d6e-api-integration.md)
+> for full request/response schemas.
+
+The synchronous `execute-by-intent` holds the HTTP connection open for
+the entire agent run, which can exceed Vercel's `maxDuration` (~800s) on
+heavy workloads. The **async job API** removes this ceiling by posting a
+job (immediate return with `jobId`), then polling for status
+independently. The d6e backend runs as a long-lived `adapter-node`
+process, so the agent runs in the background with a configurable
+wall-clock cap (default 30 minutes).
+
+#### Endpoints
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/api/workflows/execute-by-intent/jobs` | Create job — returns `{ jobId }` |
+| `GET` | `/api/workflows/execute-by-intent/jobs/{id}` | Poll status, tool trace, result |
+| `POST` | `/api/workflows/execute-by-intent/jobs/{id}/cancel` | Request cooperative cancellation |
+
+All three use `Authorization: Bearer <jwt>`.
+
+#### Job lifecycle
+
+```
+queued → running → succeeded
+                 → failed
+                 → cancelled
+```
+
+- **`queued`**: Row created, awaiting runner pickup (typically
+  immediate).
+- **`running`**: Runner claimed the job (CAS on `status`). Heartbeat
+  updated every ~10 seconds. The runner checks `cancel_requested` on
+  each tick.
+- **`succeeded`**: Agent completed; `result` field carries the same
+  `IntentResponse` shape as the sync endpoint.
+- **`failed`**: Agent error (LLM failure, timeout, etc.); `error` field
+  describes the cause.
+- **`cancelled`**: Cooperative cancellation acknowledged; `error` =
+  `"Job was cancelled"`.
+
+#### Wrapper functions (d6e-client.ts)
+
+```ts
+export async function createAsyncIntentJob(
+  caller: string,
+  accessToken: string,
+  body: { message: string; inputFileRefs?: IntentInputFileRef[]; conversationContext?: string }
+): Promise<{ jobId: string }>;
+
+export async function getAsyncIntentJobStatus(
+  caller: string,
+  accessToken: string,
+  jobId: string
+): Promise<AsyncJobStatusResponse>;
+
+export async function cancelAsyncIntentJob(
+  caller: string,
+  accessToken: string,
+  jobId: string
+): Promise<{ cancelled: boolean }>;
+```
+
+Type definitions:
+
+```ts
+interface AsyncJobToolTrace {
+  tool: string;
+  startedAt: string;        // ISO 8601
+  finishedAt?: string | null;
+}
+
+type AsyncJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+
+interface AsyncJobStatusResponse {
+  id: string;
+  status: AsyncJobStatus;
+  toolTrace: AsyncJobToolTrace[];
+  startedAt: string | null;
+  finishedAt: string | null;
+  elapsedMs: number | null;
+  result: IntentResponse | null;  // same shape as sync endpoint
+  error: string | null;
+}
+```
+
+#### Integration pattern
+
+For a Vercel-hosted frontend:
+
+1. **Submit:** Server route calls `createAsyncIntentJob()` and returns
+   `{ jobId }` to the browser.
+2. **Background finalize (optional):** Use `waitUntil()` to poll
+   `getAsyncIntentJobStatus()` and write the result to
+   `chat_session` once the job completes — so even if the user
+   closes the tab, the result is persisted.
+3. **Client poll:** Browser polls a same-origin proxy (e.g.
+   `/api/intent/d6e-job/{id}`) at 3–5s intervals. Render
+   `toolTrace` entries and `elapsedMs` as a live progress display.
+4. **Cancel:** Browser calls a same-origin proxy (e.g.
+   `/api/intent/d6e-job/{id}/cancel`) when the user clicks cancel.
+5. **Finalize:** On terminal status, update the UI. `succeeded` →
+   process `result` as normal. `failed`/`cancelled` → render
+   `error`.
+
+#### Guardrails
+
+| Guardrail | Default | Env var |
+|-----------|---------|---------|
+| Wall-clock cap | 30 min | `INTENT_JOB_TIMEOUT_MS` |
+| Step cap | 50 | `AGENT_RECURSION_LIMIT` |
+| Heartbeat stale | 60s | — |
+| Workspace concurrency | 3 | — |
+| Tool trace cap | 100 | — |
+
+#### When to use async vs sync
+
+| Scenario | Recommendation |
+|----------|----------------|
+| Vercel-hosted frontend, heavy agent runs (> 5 min) | **Async** — avoids `maxDuration` |
+| SNS bot proxy (Slack / Discord / LINE) | **Sync** — simpler, fits within the bot platform's timeout |
+| Light agent runs (< 2 min), no file generation | Either works; sync is simpler |
+| Need progress display (tool trace) | **Async** — tool trace is only available via poll |
+| Need user-initiated cancellation | **Async** — the sync endpoint has no cancel mechanism |
+
 ### Persistence: chat_session rows
 
 When a route handler wants the AI Journal / Tasks pages to remember a
@@ -399,6 +580,183 @@ Key points:
   tools). It must never be the same value as a regular user's
   `auth-refresh` cookie.
 
+### Drive Sync mirror endpoints
+
+> Available on d6e instances that have the Drive Sync mirror feature
+> enabled (introduced in `feat/drive-sync-mirror`). Implementation lives
+> in
+> [`packages/api/src/routes/v1/drive_sync.rs`](https://gitlab.com/cauchye/d6e-ai/d6e/-/blob/main/packages/api/src/routes/v1/drive_sync.rs)
+> on the d6e side; the [`d6e-saas-google-workspace`
+> SKILL](https://gitlab.com/cauchye/d6e-ai/d6e/-/blob/main/packages/skills/d6e-saas-google-workspace/SKILL.md)
+> documents the LLM-facing view (`drive_files` projection +
+> `d6e_read_drive_file` MCP tool).
+
+All routes are mounted under `/api/v1/drive-sync/*` (not nested under
+`/api/v1/workspaces/{id}`). The `workspace_id` is supplied in the body
+(write methods) or query string (read methods), and every handler
+asserts membership through the d6e-side `ensure_workspace_member`
+check, so the proxy still has to pin the workspace id server-side just
+like every other Bearer endpoint.
+
+| Method   | Path                             | `workspace_id` location             | Body                                                                                                   | Returns                                                                |
+| -------- | -------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------- |
+| `GET`    | `/api/v1/drive-sync/config`      | query                               | —                                                                                                      | `{ config, roots[] }`                                                  |
+| `PUT`    | `/api/v1/drive-sync/config`      | body                                | `{ workspace_id, enabled: bool, sync_interval_seconds: int (>=60) }`                                   | `{ config, roots[] }`                                                  |
+| `GET`    | `/api/v1/drive-sync/roots`       | query                               | —                                                                                                      | `DriveSyncRoot[]`                                                      |
+| `POST`   | `/api/v1/drive-sync/roots`       | body                                | `{ workspace_id, drive_id, drive_type: 'folder'\|'shared_drive'\|'my_drive', name, shared_drive_id? }` | New `DriveSyncRoot` (also kicks off a background initial sync)         |
+| `DELETE` | `/api/v1/drive-sync/roots/{rid}` | query                               | —                                                                                                      | `{ status: 'deleted' }` (cascade-deletes nodes + clears projection)    |
+| `POST`   | `/api/v1/drive-sync/sync`        | body                                | `{ workspace_id }`                                                                                     | `{ status: 'started' }` (background job; status visible via `/status`) |
+| `GET`    | `/api/v1/drive-sync/status`      | query                               | —                                                                                                      | `{ config, roots[], node_count }`                                      |
+| `POST`   | `/api/v1/drive-sync/materialize` | body                                | `{ workspace_id, node_id }`                                                                            | `{ storage_file_id }` (downloads bytes once, caches in `storage_file`) |
+| `POST`   | `/api/v1/drive-sync/read`        | body                                | `{ workspace_id, drive_id }`                                                                           | `{ storage_file_id, filename, content_type, size }` (TTL-aware cache)  |
+| `GET`    | `/api/v1/drive-sync/picker`      | query (`parent?`, `shared_drives?`) | —                                                                                                      | `{ folders: PickerEntry[], shared_drives: PickerEntry[] }`             |
+
+Wrapper convention example (extend `src/lib/server/d6e-client.ts` only
+if your app actually exposes Drive Sync controls):
+
+```ts
+export async function triggerDriveSync(caller: string, accessToken: string): Promise<void> {
+  const apiUrl = getD6eUrl(caller);
+  const workspaceId = getD6eWorkspaceId(caller);
+  const response = await fetch(`${apiUrl}/api/v1/drive-sync/sync`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ workspace_id: workspaceId }),
+    signal: buildCombinedSignal(DRIVE_SYNC_TIMEOUT_MS, undefined)
+  });
+  if (!response.ok) {
+    const upstreamBody = await response.text().catch(() => '');
+    throw new D6eClientError(
+      `triggerDriveSync failed (caller=${caller}): ${response.status}`,
+      response.status,
+      upstreamBody.slice(0, 500),
+      { timedOut: false, aborted: false }
+    );
+  }
+}
+```
+
+Notes specific to Drive Sync proxies:
+
+- **Pin `workspace_id` in the body too.** Forwarding the request body
+  verbatim from the browser is a common mistake — the user could swap
+  in another workspace id their JWT happens to authorise. Always
+  overwrite the field with `getD6eWorkspaceId(caller)` before sending,
+  same as for `execute-by-intent`.
+- **`sync_interval_seconds` must be ≥ 60.** The d6e side returns 400
+  otherwise. Validate in the proxy so the UI gets a JSON 400 instead of
+  an opaque error.
+- **`/sync` and `/roots POST` return immediately** with `status:
+'started'`. The actual job runs in the background; the UI must poll
+  `/status` (or display `config.last_sync_error`) to surface failures.
+- **`/picker` only returns folders** when not in `shared_drives=true`
+  mode, and only returns shared drives in that mode. Don't expect
+  files; the browser/agent picks folders, not individual files.
+- **`/materialize` blocks until the Drive download finishes.** Native
+  Docs/Sheets/Slides are exported (PDF / XLSX / PPTX), which can take a
+  few seconds on large files; size the proxy timeout accordingly.
+- **`/read` is what an LLM-driven flow usually wants.** It takes a
+  `drive_id` from the `drive_files` SQL projection and returns the
+  cached `storage_file` for downstream use (`d6e_view_image` /
+  `d6e_extract_file_text`). For agent UX, prefer `/read` over
+  `/materialize` because it survives Drive-side file moves.
+
+### SaaS API calls through the d6e proxy
+
+> The LLM behind `execute-by-intent` already reaches SaaS APIs via the
+> `d6e_call_external_api` MCP tool, so most prompt-driven flows never
+> need this endpoint directly. Use it when your **own server code**
+> must call a SaaS API (freee, Google Workspace, Notion, …) with the
+> workspace's stored credential.
+
+**Prerequisite — connect the provider in the d6e console first.** SaaS
+credentials are created on the workspace settings page
+(`{D6E_BASE_URL}/{locale}/workspaces/{id}/settings` → SaaS integrations
+section, workspace **admin** role required):
+
+- OAuth providers (freee, Google Workspace, Notion, GitHub, Salesforce,
+  Box, MoneyForward クラウド / 経費) hop through d6e-auth's consent
+  flow, which holds the provider's client secret.
+- Token providers (Chatwork, Zendesk) take API tokens typed into a
+  dialog.
+
+There is no REST API to create these credentials from a custom
+frontend — the console is the only entry point. Plan this as a setup
+step with the workspace admin before writing any proxy code.
+
+Once connected, any workspace **member** JWT can call:
+
+```
+POST ${D6E_BASE_URL}/api/v1/saas-proxy
+Authorization: Bearer <jwt>
+{
+  "workspace_id": "<UUID>",        // pin server-side, as always
+  "provider": "freee",             // catalog id
+  "method": "GET",                 // GET/POST/PUT/PATCH/DELETE
+  "path": "/api/1/companies",      // appended to the provider's base URL
+  "headers": { ... },              // optional; auth headers are ignored
+  "body": { ... },                 // optional JSON body
+  "file_id": "<storage UUID>"      // optional: send a workspace file as the body
+}
+```
+
+Response: `{ status, headers, body }` mirroring the upstream reply
+(response bodies capped at 10 MB; use
+`POST /api/v1/saas-proxy-download` for binaries). Notes:
+
+- The proxy injects the real `Authorization` (or provider-specific
+  token header) from the encrypted `saas_credential` row and refreshes
+  expired OAuth tokens automatically. Caller-supplied `authorization`,
+  `cookie`, `host`, and `x-chatworktoken` headers are discarded.
+- `404 No credential found for provider=…` means the provider has not
+  been connected in the console for this workspace — not a bug in your
+  code.
+- `file_id` alone sends the file's bytes as the raw body; `file_id` +
+  `body` builds a multipart/related request (JSON metadata + binary),
+  which is what Google Drive uploads want.
+
+### Workspace invitation admin endpoints
+
+> Available on d6e instances that have the pending-invitation feature
+> enabled (introduced in `feat(workspace): support pending invitations
+for unregistered users`). Implementation lives in
+> [`packages/api/src/routes/v1/workspace_invitation.rs`](https://gitlab.com/cauchye/d6e-ai/d6e/-/blob/main/packages/api/src/routes/v1/workspace_invitation.rs).
+
+The same `POST /api/v1/workspaces/{id}/members` endpoint that has
+always created memberships now creates a **pending invitation** row
+instead when the invited email does not yet exist in the d6e instance.
+That row is auto-consumed by the d6e auth layer on the invitee's
+first JWT-authenticated request (see the
+[`d6e-auth-integration`](../d6e-auth-integration/SKILL.md) skill); the
+admin API below lets a custom frontend list and cancel those pending
+rows in the meantime.
+
+| Method   | Path                                                 | Auth                              | Notes                                                                                             |
+| -------- | ---------------------------------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `GET`    | `/api/v1/workspaces/{id}/invitations`                | Bearer (workspace **admin** role) | Returns `InvitationInfo[]`. Inviter name is joined server-side so the table has no N+1.           |
+| `DELETE` | `/api/v1/workspaces/{id}/invitations/{invitationId}` | Bearer (workspace **admin** role) | Cancels a single pending invitation. Audit-logged as `cancel_pending_invitation`. 204 on success. |
+
+```ts
+interface InvitationInfo {
+  id: string; // UUID
+  workspace_id: string; // UUID
+  email: string; // lowercased server-side
+  role: 'admin' | 'member';
+  invited_by_user_id: string | null; // null when the inviter was deleted
+  invited_by_user_name: string | null;
+  created_at: string; // ISO 8601
+}
+```
+
+`POST /api/v1/workspaces/{id}/members` now also returns a discriminated
+shape — either `{ membership: WorkspaceMember }` (when the email
+matched an existing user) or `{ invitation: InvitationInfo }` (pending
+case). Update the proxy to surface both branches to the UI so the
+admin can render a distinct toast for each.
+
 ## Implementation Checklist
 
 - [ ] Every public function in the d6e client takes `caller: string` as the first argument.
@@ -408,6 +766,12 @@ Key points:
 - [ ] Bearer endpoints under `/api/v1/...` send both `Authorization: Bearer <jwt>` and `X-Workspace-ID: <wsId>` when the path includes a workspace.
 - [ ] SvelteKit endpoints (`/api/chat-sessions`, `/api/workspace-prompt-rules`) use `Cookie: auth-token=<jwt>` and never `Authorization`.
 - [ ] The SvelteKit route handler pins `workspaceId` from env, not from the request body.
+- [ ] For Drive Sync endpoints, the proxy overrides `workspace_id` in **both** the JSON body and any query string before forwarding (the d6e route accepts it in either spot, and the browser must never choose it).
+- [ ] If you expose `/sync` or `/roots POST`, the UI polls `/status` (or reads `config.last_sync_error`) before claiming success — the d6e endpoint returns `200 { status: 'started' }` before the job actually finishes.
+- [ ] If you expose admin invitation management, the proxy forwards 403 / 404 from `GET/DELETE /workspaces/{id}/invitations` unchanged (so the UI can tell "not admin" from "no such invitation"), and `POST /workspaces/{id}/members` surfaces both `{ membership }` and `{ invitation }` branches to the client.
+- [ ] If using the async job API, the proxy pins `workspaceId` in the create-job body (same rule as sync `execute-by-intent`).
+- [ ] If using `waitUntil()` for background finalization, handle the case where the Vercel function is recycled (the d6e job still runs — the next poll or page load should pick up the result).
+- [ ] Async job poll proxies (e.g. `/api/intent/d6e-job/{id}`) never expose the raw d6e endpoint URL to the browser.
 - [ ] On 401/403 inside a route, the wrapper bubbles the status to the browser; do NOT call `clearSession()` here (the hook layer already manages refresh).
 - [ ] Bootstrap script SHA-256-hashes the prompt body and compares against every existing rule's content before POSTing.
 - [ ] Bootstrap script reads `D6E_INIT_REFRESH_TOKEN` separately from end-user cookies.
@@ -424,9 +788,10 @@ Key points:
 
 ### Reliability
 
-- Tune `executeByIntent`'s timeout to whatever the upstream LLM round-trip can plausibly take, but keep it strictly below Vercel's `maxDuration` so the function returns a clean 504 rather than being killed mid-flight.
+- Tune `executeByIntent`'s timeout to whatever the upstream LLM round-trip can plausibly take, but keep it strictly below Vercel's `maxDuration` so the function returns a clean 504 rather than being killed mid-flight. For runs that routinely exceed this, switch to the async job API.
 - For non-critical writes (e.g. analytics, chat_session append), wrap the call in a `try/catch` and log on failure instead of blowing up the user-visible response. The reference `/api/intent` handler still returns the LLM result even if persistence failed; the browser can recover.
 - Treat `404` on file delete as success — files might have been GC'd or already removed in a parallel tab.
+- When using `waitUntil()` for async job finalization, implement retry logic for the final `chat_session` write — the Vercel function may be recycled between poll ticks. The d6e-side job result is persisted in `intent_job` regardless, so the data is not lost.
 
 ### Operational
 
@@ -444,17 +809,61 @@ endpoint authenticates via `locals.user` (cookie-based). Switch to
 
 ### Empty 400 body from `/api/v1/workspaces/{id}/files/multipart`
 
-`workspaceId` in the URL is not a UUID, or the multipart body is
-missing the `metadata` field. Verify the route handler is calling
-`getD6eWorkspaceId('/api/upload')` (which validates the UUID format)
-and appending both `file` and `metadata` parts.
+The d6e side returns a bare 400 when the multipart body has no `file`
+part (or the part has no filename), or when the request carries no
+usable workspace id — the handler takes it from the `X-Workspace-ID`
+header, not the URL path. Verify the route handler calls
+`getD6eWorkspaceId('/api/upload')` (which validates the UUID format),
+sets the `X-Workspace-ID` header, and appends the `file` part. The
+`metadata` part is optional. A `413` means the file exceeded the
+server-side 1 GB cap (this app additionally enforces 10 MB client-side).
+
+### `executeByIntent` returns 402 with "AI features are temporarily disabled"
+
+Not an auth problem. The d6e instance soft-gates LLM usage per
+workspace based on billing entitlement (past-due subscription,
+exhausted credits, usage cap). The response body's `message` explains
+the reason. Surface it to the user verbatim and point the workspace
+admin at the instance's billing page — retrying will not help until
+the entitlement recovers.
+
+### `POST /api/v1/saas-proxy` returns 404 "No credential found"
+
+The target provider has never been connected for this workspace. A
+workspace admin must connect it on the d6e console's workspace
+settings page (SaaS integrations section) first — there is no API to
+do this from the custom frontend. See [SaaS API calls](#saas-api-calls-through-the-d6e-proxy).
 
 ### `D6eClientError(status=504, timedOut=true)` on every `executeByIntent`
 
 The configured `timeoutMs` is shorter than the LLM round-trip. Bump
 `DEFAULT_INTENT_TIMEOUT_MS` (currently 270s) — but stay below
 `@sveltejs/adapter-vercel`'s `maxDuration: 300` so the function
-returns gracefully.
+returns gracefully. Alternatively, switch to the [async job
+API](#async-intent-job-api) which bypasses the HTTP connection lifetime
+entirely.
+
+### `POST .../execute-by-intent/jobs` returns 429
+
+The workspace has hit its per-workspace concurrency cap (default 3
+running jobs). Either wait for an existing job to finish, cancel one
+via `POST .../jobs/{id}/cancel`, or ask the instance admin to raise the
+limit.
+
+### Async job status stays `running` with stale heartbeat
+
+The runner process was killed (e.g. container restart) mid-flight. The
+d6e side detects staleness after 60s (heartbeat not updated) and will
+transition the job to `failed` automatically on the next status check.
+If you see this consistently, investigate the d6e instance's process
+health.
+
+### Async job status shows `cancelled` but the cancel request returned `false`
+
+`{ cancelled: false }` means the job was not in `running` state when
+the cancel request arrived — it had already finished (or was still
+`queued`). Check `finishedAt` and `status` on the poll response to see
+what actually happened.
 
 ### `npm run init` POSTs a duplicate rule every time
 
@@ -483,7 +892,51 @@ promote them or replace the env var with an admin's token.
 This is intentional. Map `aborted === true` to a UI message like
 "Request cancelled" rather than the generic error banner.
 
+### `POST /api/v1/drive-sync/sync` returns 200 but nothing seems to happen
+
+The route returns `{ status: 'started' }` immediately and kicks off the
+actual sync on a tokio task. The success / failure result lands in
+`drive_sync_config.last_synced_at` and `drive_sync_config.last_sync_error`,
+which you read back through `GET /api/v1/drive-sync/status`. Wire the UI
+to poll `/status` (or refresh on focus) instead of trusting the 200.
+
+### `POST /api/v1/drive-sync/roots` returns 400 with `invalid drive_type`
+
+`drive_type` must be one of `folder`, `shared_drive`, or `my_drive`.
+The picker payload returns only folders and shared drives; encode the
+user's selection as `folder` (any subfolder) or `shared_drive` (top of
+a shared drive), and reserve `my_drive` for the special "everything in
+My Drive" case.
+
+### `POST /api/v1/drive-sync/read` returns 404 even though the file exists in Drive
+
+The `drive_id` you sent is not present in the workspace's sync mirror.
+Either the file lives outside any sync root, or the sync that would
+have indexed it has not run yet. Trigger `/sync`, wait until
+`status.node_count` updates, and retry. For files outside the sync
+roots, use the underlying SaaS proxy / `d6e_download_external_file` MCP
+tool instead — `/read` is intentionally limited to mirrored files.
+
+### `GET /api/v1/workspaces/{id}/invitations` returns 403 for a workspace owner
+
+The d6e side requires the **admin** role on
+`workspace_membership`, not just membership. Confirm the user is an
+admin in the workspace; the owner concept (creator) doesn't exist
+separately. Promote the user through the d6e admin UI, then retry.
+
+### `POST /api/v1/workspaces/{id}/members` returns `{ invitation: ... }` instead of `{ membership: ... }`
+
+This is the new pending-invitation branch — the invitee has not signed
+in to the d6e instance yet, so the row landed in `workspace_invitation`
+instead of `workspace_membership`. Surface this to the admin (e.g.
+toast "Invitation queued for first login"); the row will be
+auto-promoted by `apply_pending_invitations` on the invitee's first
+JWT-authenticated request without any additional work from the
+frontend.
+
 ## Related Skills
 
-- [`d6e-auth-integration`](../d6e-auth-integration/SKILL.md) — Provides the `event.locals.accessToken` that every wrapper here consumes.
-- [`d6e-prompt-driven-ui`](../d6e-prompt-driven-ui/SKILL.md) — Designs the LLM contract that `executeByIntent` carries and the workspace prompt rule that `init-workspace.mjs` registers.
+- [`d6e-auth-integration`](../d6e-auth-integration/SKILL.md) — Provides the `event.locals.accessToken` that every wrapper here consumes, plus the membership probe semantics that interact with pending invitations.
+- [`d6e-prompt-driven-ui`](../d6e-prompt-driven-ui/SKILL.md) — Designs the LLM contract that `executeByIntent` carries and the workspace prompt rule that `init-workspace.mjs` registers; also covers the prompt patterns that read the `drive_files` projection backed by these Drive Sync endpoints.
+- External: [`d6e-saas-google-workspace`](https://gitlab.com/cauchye/d6e-ai/d6e/-/blob/main/packages/skills/d6e-saas-google-workspace/SKILL.md) — Lives in the `d6e` repo and documents the `drive_files` SQL projection plus the `d6e_read_drive_file` MCP tool that sit on top of the Drive Sync endpoints described here.
+- Background: [Custom frontends and the d6e instance — how they relate](https://gitlab.com/cauchye/d6e-ai/d6e-custom-frontend-skills/-/blob/main/docs/frontend-and-instance.md) ([日本語版](https://gitlab.com/cauchye/d6e-ai/d6e-custom-frontend-skills/-/blob/main/docs/frontend-and-instance.ja.md)) — why every call in this skill goes through the instance's public APIs, and how the frontend relates to the instance and to Plugins.

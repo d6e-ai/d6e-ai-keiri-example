@@ -91,9 +91,13 @@ you are a third party building against a managed instance you do not
 operate — register your **own** `registered_client` on d6e-auth instead
 and use the original two-stage exchange:
 
-1. The d6e-auth admin issues you a `client_id` + `client_secret` with
-   your callback URL in its `redirect_uris`. Set `D6E_AUTH_CLIENT_ID` to
-   that id and add `D6E_AUTH_CLIENT_SECRET`.
+1. Obtain your own `client_id` + `client_secret` with your callback URL
+   in its `redirect_uris`. A franchise owner/admin can self-serve this
+   from the d6e-auth franchise portal
+   (`${D6E_AUTH_URL}/{locale}/account/franchise`): register a client
+   under *d6e Instance Connection* and manage its **Redirect URIs** on
+   the same card. Without a franchise role, ask a d6e-auth operator.
+   Set `D6E_AUTH_CLIENT_ID` to that id and add `D6E_AUTH_CLIENT_SECRET`.
 2. `exchangeAuthorizationCode` POSTs `authorization_code` (with your
    `client_id` / `client_secret`) to `${D6E_AUTH_URL}/api/v1/auth/token`.
    That access token carries `iss=d6e-auth` and is rejected by the
@@ -105,7 +109,8 @@ and use the original two-stage exchange:
 Everything else in this skill (cookies, refresh, allow-list, logout) is
 identical. The trade-off: one extra exchange on login and a client
 secret to protect, in return for needing no change on the instance side.
-Prefer the instance-brokered flow above whenever you (or a workspace
+Prefer the instance-brokered flow above for local development (loopback
+callbacks need no registration anywhere) and whenever you (or a workspace
 admin) can register your callback in Workspace Settings → Integration →
 **Redirect URIs**, or instance-wide in the d6e-auth franchise portal.
 
@@ -140,7 +145,7 @@ Refresh **always** targets `${D6E_BASE_URL}/api/v1/auth/token`, never
 d6e-auth, so the rotated access token keeps its
 d6e-instance-issued audience.
 
-### Workspace allow-list
+### Workspace allow-list and pending invitations
 
 After the code exchange, `/auth/callback` calls
 `GET ${D6E_BASE_URL}/api/v1/workspaces/${D6E_WORKSPACE_ID}` with the
@@ -148,6 +153,48 @@ freshly issued Bearer. Only an explicit `403` or `404` routes the user
 to `/auth/no-access`; transient errors (timeout, 5xx) fall back to
 `/auth/login` so the user can retry without seeing a misleading
 "contact your administrator" message.
+
+The d6e instance auto-converts **pending invitations** into real
+memberships on the user's first JWT-authenticated request, so the
+frontend never has to special-case the "first login of an invited
+email" path:
+
+- When an admin POSTs `/api/v1/workspaces/{id}/members` for an email
+  that does not yet exist in the d6e instance, the row lands in a
+  separate `workspace_invitation` table instead of
+  `workspace_membership` (see the [`d6e-workspace-api-client`](../d6e-workspace-api-client/SKILL.md)
+  skill for the admin CRUD that exposes these rows).
+- The d6e auth layer's `provision_jwt_user` calls
+  `apply_pending_invitations(db, user_id, email)` whenever it sees a
+  JWT, looking up any `workspace_invitation` row whose lowercased
+  `email` matches the JWT's `email` claim. Matching rows are converted
+  into `workspace_membership` rows inside the same provisioning step,
+  and the invitation row is deleted only after the membership INSERT
+  succeeds (so a transient DB failure simply retries on the next
+  request rather than dropping the invitation).
+- Email case is folded server-side (`Foo@example.com` and
+  `foo@example.com` resolve to the same membership), so the frontend
+  must **not** lowercase or otherwise rewrite the JWT claim before
+  passing it through.
+
+Operational consequence: a workspace admin can pre-invite a user
+who has never logged in to the d6e instance, and the moment that user
+completes their first sign-in through this app's `/auth/login`, the
+subsequent `verifyWorkspaceMembership` probe at `/auth/callback`
+returns 200 without any additional steps. No frontend code change is
+required to support this flow — the existing 200 / 403 / 404 / retry
+branching keeps working.
+
+What the frontend should NOT do:
+
+- **Do not** treat 403 / 404 differently for pre-invited emails. By the
+  time `/auth/callback` runs the probe, the invitation has already
+  been consumed (or it never matched). A 403/404 still means "not a
+  member, route to `/auth/no-access`".
+- **Do not** retry the probe with a backoff hoping a pending
+  invitation lands. The conversion is synchronous inside
+  `provision_jwt_user`; if it didn't fire on this request it isn't
+  going to fire on the immediate retry either.
 
 ### Two-stage logout
 
@@ -183,6 +230,24 @@ a developer's identity.
 
 A minimal SvelteKit implementation has four files plus a hook.
 
+### Step 0: Collect the values from the d6e console
+
+Every value except the redirect URI can be read off the d6e instance
+itself — you do not need d6e-auth admin access:
+
+| Variable | Where to get it |
+| --- | --- |
+| `D6E_BASE_URL` | The origin of the d6e console you already use, e.g. `https://cauchye.d6e.ai` |
+| `D6E_WORKSPACE_ID` | Workspace settings page (`{D6E_BASE_URL}/{locale}/workspaces/{id}/settings`) → **Integration** section has a copy button. It is also the UUID in every workspace URL |
+| `D6E_AUTH_CLIENT_ID` | Same **Integration** section on the settings page ("Client ID" field). Shown only to users with the workspace **admin** role — ask a workspace admin to copy it for you if the section is missing |
+| `D6E_AUTH_URL` | The login page the console redirects you to when signed out (typically `https://www.d6e.ai`). The settings page's "account linking" button also points at it |
+| `D6E_AUTH_REDIRECT_URI` | You choose it: `<your app origin>/auth/callback`. Loopback origins (localhost, any port) work as-is; deployed origins must be allow-listed (see below) |
+
+The Integration section renders only for workspace admins
+(`userRole === 'admin'` in the settings loader), and only when the
+instance has `D6E_AUTH_CLIENT_ID` configured. A regular member can
+still read the workspace UUID from the URL bar.
+
 ### Step 1: Environment
 
 ```dotenv
@@ -194,13 +259,33 @@ D6E_WORKSPACE_ID=<UUID of the workspace this app is bound to>
 ```
 
 Set `D6E_AUTH_CLIENT_ID` to the **instance's** own client id; the
-frontend needs no client secret. A deployed (non-loopback)
-`D6E_AUTH_REDIRECT_URI` must be registered on d6e-auth — either
-instance-wide in `registered_client.redirectUris` (franchise portal) or
-per-workspace in Workspace Settings → Integration → **Redirect URIs**
-(workspace-scoped tokens). Loopback callbacks need no registration.
-(The standalone-client alternative above instead uses your own
-`client_id` + `D6E_AUTH_CLIENT_SECRET`.)
+frontend needs no client secret. (The standalone-client alternative
+above instead uses your own `client_id` + `D6E_AUTH_CLIENT_SECRET`.)
+
+#### Registering the redirect URI
+
+**Loopback callbacks need no registration.** If
+`D6E_AUTH_REDIRECT_URI` points at `localhost`, `127.0.0.0/8`, or
+`[::1]` — any port, any path — d6e-auth accepts it automatically, so
+the local-dev value above works out of the box.
+
+A **deployed** (non-loopback) `D6E_AUTH_REDIRECT_URI` must be
+registered on d6e-auth in one of the two places below, or the flow
+fails (see Troubleshooting). Workspace admins can self-serve the
+per-workspace path; instance-wide registration still needs a franchise
+owner/admin (or d6e-auth platform admin).
+
+| Registration | Scope | Who can edit | Token scope |
+| --- | --- | --- | --- |
+| `registered_client.redirectUris` on d6e-auth | Instance-wide | **Self-service for franchise owners/admins**: open `${D6E_AUTH_URL}/{locale}/account/franchise`, find the instance card under *d6e Instance Connection*, and add the URL under **Redirect URIs**. d6e-auth platform admins can also edit any instance under `/admin/instances` | Unscoped (no `d6e_workspace_id`) |
+| `workspace_redirect_uri` (via d6e console) | Per workspace | **Workspace admins**: `{D6E_BASE_URL}/{locale}/workspaces/{id}/settings` → **Integration** → **Redirect URIs**. Must be absolute `https://`, no URL fragment, max 2000 chars. The instance proxies to d6e-auth's client API (`POST/DELETE /api/v1/client/workspace-redirect-uris`) | Workspace-scoped (`d6e_workspace_id` claim) |
+
+Register each deployed environment (preview deploy, production) with
+its own callback URL, matching character-for-character. Franchise
+admins can view and delete workspace-registered URIs (workspace ID,
+added-by email, created-at) on the franchise portal instance card.
+The deprecated `ALLOWED_REDIRECT_URIS` env var on the d6e instance is
+no longer read — only d6e-auth validates redirect URIs.
 
 ### Step 2: `/auth/login`
 
@@ -358,17 +443,18 @@ member" (route to `/auth/no-access`) from "couldn't ask" (route to
 
 ## Implementation Checklist
 
-- [ ] All five env vars are present and validated on startup (see `src/lib/server/env.ts`); `D6E_AUTH_CLIENT_ID` is the instance's own client id and no client secret is required.
+- [ ] All five env vars are present and validated on startup (see `src/lib/server/env.ts`); `D6E_AUTH_CLIENT_ID` is the instance's own client id and no client secret is required. Client ID and Workspace ID come from the workspace settings page's Integration section (admin-only view — see Quick Start Step 0).
 - [ ] `D6E_AUTH_REDIRECT_URI` is registered on d6e-auth — instance-wide in `registered_client.redirectUris` (franchise portal; unscoped tokens) or per-workspace in Workspace Settings → Integration → **Redirect URIs** (workspace-scoped `d6e_workspace_id` tokens). Loopback callbacks need no registration.
 - [ ] `/auth/callback` exchanges the code at the d6e instance (`exchangeAuthorizationCode`) and stores the returned pair directly.
 - [ ] All four cookies set `httpOnly`, `sameSite: 'lax'`, `secure: !dev`, `path: '/'`.
 - [ ] `loadSession()` refreshes via `${D6E_BASE_URL}/api/v1/auth/token` (the d6e instance), not d6e-auth.
 - [ ] `hooks.server.ts` populates `event.locals.accessToken` and `event.locals.user` from `loadSession()` before any route reads them.
 - [ ] `/auth/logout` is POST-only and 303-redirects through `${D6E_AUTH_URL}/auth/logout`.
-- [ ] `/auth/callback` calls `verifyWorkspaceMembership()` and routes 403/404 to `/auth/no-access`.
+- [ ] `/auth/callback` calls `verifyWorkspaceMembership()` and routes 403/404 to `/auth/no-access` **without** any special case for "pre-invited" emails — the d6e instance auto-converts pending invitations into memberships during JWT provisioning.
 - [ ] The state cookie value is constant-time compared against the `state` query param.
 - [ ] `returnTo` is restricted to same-origin paths and rejects `/auth/*` to prevent post-login loops.
 - [ ] Refresh tokens are deduplicated by value to survive concurrent requests in the grace window.
+- [ ] Operator-facing docs explain the "invite by email, ask user to sign in, no extra config" flow so admins don't try to manually flip status flags after the user logs in.
 
 ## Best Practices
 
@@ -383,9 +469,61 @@ member" (route to `/auth/no-access`) from "couldn't ask" (route to
 
 - Treat `D6E_INIT_REFRESH_TOKEN` as a secret with the same sensitivity as a database password. Rotate it whenever a developer with admin access leaves.
 - When `D6E_AUTH_URL` is unreachable during logout, the user is still locally signed out (cookies clear synchronously); the d6e-auth-side cleanup waits for the upstream to recover.
-- Vercel deploys map env vars 1:1 with `.env`. Don't forget to set `D6E_AUTH_REDIRECT_URI` per environment. Preview deploys need their own redirect URIs registered on d6e-auth — workspace admins can add them in Workspace Settings → Integration → **Redirect URIs**.
+- Vercel deploys map env vars 1:1 with `.env`. Don't forget to set `D6E_AUTH_REDIRECT_URI` per environment. Preview deploys need their own redirect URIs registered on d6e-auth — workspace admins can add them in Workspace Settings → Integration → **Redirect URIs** (or a franchise owner/admin can add them instance-wide in the franchise portal).
 
 ## Troubleshooting
+
+### Login form shows "Invalid client configuration" (400)
+
+d6e-auth rejected the authorize request because the `redirect_uri` in
+the login URL is a non-loopback URL that is not in the instance's
+`registered_client.redirectUris` — this happens **before any code is
+issued**, so the browser never returns to your app. (Loopback callbacks
+are always accepted; if you see this on localhost, check the URL is
+really loopback — e.g. `app.localhost` or a LAN IP does not count.) A
+franchise owner/admin fixes it self-service: open
+`${D6E_AUTH_URL}/{locale}/account/franchise`, pick the instance card
+under *d6e Instance Connection*, and add your exact callback URL under
+**Redirect URIs** (matching is character-for-character; no trailing
+slash normalization).
+
+### `invalid_redirect_uri` (400) from the token exchange
+
+The instance checks a non-loopback `redirect_uri` you POST against its
+own allow-list before relaying the code: the primary
+`{ORIGIN}/auth/callback` plus every entry in its
+`ALLOWED_REDIRECT_URIS` env var (comma-separated; trailing slashes are
+ignored). Your app's callback is not on that list. Ask the instance
+operator to add it — and remember each deployed environment (preview
+deploy, production) needs its own entry. Loopback callbacks skip this
+check on instances running d6e api v0.20.1+; on older instances,
+localhost ports still need explicit `ALLOWED_REDIRECT_URIS` entries.
+
+### `token_exchange_failed` (400/401) from the token exchange
+
+The instance relays the exchange to d6e-auth and deliberately returns
+this generic error to the client while logging the real reason
+server-side. Common causes, in order of likelihood:
+
+- The authorization code expired — codes live **5 minutes** and are
+  single-use. A page reload on `/auth/callback` re-sends a consumed
+  code.
+- The `redirect_uri` sent in the exchange differs from the one used at
+  `/auth/login` (both must be the exact same string, also registered in
+  the d6e-auth client's `redirectUris`).
+- The refresh token was already rotated by a parallel request (see the
+  in-flight deduplication section).
+
+If you can read the instance's logs, look for
+`Auth service returned error (status=...)`.
+
+### Login form shows "email domain not allowed" (403)
+
+The instance's registered client on d6e-auth has
+`allowedEmailDomains` configured, and the signing-in user's email
+domain is not on it. This is enforced by d6e-auth at the login form,
+before any code is issued. A d6e-auth admin must extend the client's
+domain list (or the user must use an allowed account).
 
 ### Login succeeds but every API call returns 401
 
@@ -428,6 +566,20 @@ d6e admin UI, or change the environment variable to a workspace they
 do belong to. Transient failures (504, timeout) should NOT route to
 `/auth/no-access`; route to `/auth/login` so the user can retry.
 
+If the user **was** pre-invited as a pending invitation but the probe
+still returns 403/404, check that:
+
+- The invitation email and the JWT's `email` claim agree after both
+  sides are lowercased — the conversion uses
+  `email.trim().to_lowercase()` in `apply_pending_invitations`.
+- The target workspace is not soft-deleted (`workspace.deleted_at IS
+NULL`). Soft-deleted workspaces are filtered out of the auto-promote
+  loop on purpose.
+- The d6e instance's logs do not show
+  `Failed to apply pending invitation ...` warnings — those indicate a
+  transient DB error that needs another login attempt to retry the
+  insert. (The invitation row is preserved until the INSERT succeeds.)
+
 ### Sidebar shows wrong user after refresh
 
 `auth-user` cookie is stale. `loadSession()` falls back to JWT claims
@@ -439,3 +591,4 @@ cookie. Have users log out and back in after a profile rename, or call
 
 - [`d6e-workspace-api-client`](../d6e-workspace-api-client/SKILL.md) — Uses the access token populated by this skill to talk to file storage, workflow execution, and chat-session APIs.
 - [`d6e-prompt-driven-ui`](../d6e-prompt-driven-ui/SKILL.md) — Designs the LLM contract that `execute-by-intent` (authenticated via this skill) actually consumes.
+- Background: [Custom frontends and the d6e instance — how they relate](https://gitlab.com/cauchye/d6e-ai/d6e-custom-frontend-skills/-/blob/main/docs/frontend-and-instance.md) ([日本語版](https://gitlab.com/cauchye/d6e-ai/d6e-custom-frontend-skills/-/blob/main/docs/frontend-and-instance.ja.md)) — the big picture this auth flow lives in: the three parties, the two allow-lists, and where Plugins fit.

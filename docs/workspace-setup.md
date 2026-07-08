@@ -6,21 +6,23 @@ you use the AI Journal page.
 
 ## Enabling end-user login
 
-Before anyone can log into this app, register this app's OAuth callback
-URL on d6e-auth. Login is *instance-brokered*: `/auth/callback`
-exchanges the authorization code at the instance's own
-`${D6E_BASE_URL}/api/v1/auth/token`, which relays it to d6e-auth using
-the instance's client credentials. d6e-auth validates `redirect_uri` at
-both authorize and token exchange. Register every environment's callback
-URL in one of these places:
+**Local development needs no registration.** Loopback callback URLs
+(`localhost`, `127.0.0.0/8`, or `[::1]` — any port, any path) are always
+accepted by d6e-auth, so `npm run dev` on any port logs in out of the box.
+
+Before anyone can log into a **deployed** copy of this app, register its
+(non-loopback) OAuth callback URL on d6e-auth. Login is
+*instance-brokered*: `/auth/callback` exchanges the authorization code
+at the instance's own `${D6E_BASE_URL}/api/v1/auth/token`, which relays
+it to d6e-auth using the instance's client credentials. d6e-auth validates
+`redirect_uri` at both authorize and token exchange. Register every
+deployed environment's callback URL in one of these places:
 
 1. **Per-workspace (self-service)** — a workspace admin adds each URL
-   (e.g. `http://localhost:5173/auth/callback` for dev and
-   `https://<deploy>/auth/callback` for prod) in the d6e console:
+   (e.g. `https://<deploy>/auth/callback` for prod) in the d6e console:
    Workspace Settings → Integration → **Redirect URIs**. Must be
-   absolute `https://` for deployed URLs (loopback needs no
-   registration). Tokens issued via these URIs carry a
-   `d6e_workspace_id` claim scoped to that workspace.
+   absolute `https://` for deployed URLs. Tokens issued via these URIs
+   carry a `d6e_workspace_id` claim scoped to that workspace.
 2. **Instance-wide (franchise portal)** — add the URL to the instance's
    `registered_client.redirectUris` on d6e-auth at
    `${D6E_AUTH_URL}/{locale}/account/franchise`. These logins issue
@@ -58,11 +60,11 @@ overwritten the next time someone re-runs the script.
 
 `npm run init` reads `.env` automatically via Node's `--env-file` flag.
 
-| Variable                 | Where to find it                                                                                |
-| ------------------------ | ----------------------------------------------------------------------------------------------- |
-| `D6E_BASE_URL`           | Base URL of the d6e instance (e.g. `https://your-d6e-instance.example.com`)                     |
-| `D6E_WORKSPACE_ID`       | UUID of the target workspace (visible in the d6e frontend URL when you're inside one)           |
-| `D6E_INIT_REFRESH_TOKEN` | Value of the `auth-refresh` cookie for a logged-in workspace-ADMIN session on `D6E_BASE_URL`    |
+| Variable                 | Where to find it                                                                                                                                  |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `D6E_BASE_URL`           | Base URL of the d6e instance (e.g. `https://your-d6e-instance.example.com`)                                                                       |
+| `D6E_WORKSPACE_ID`       | UUID of the target workspace — copy button in the workspace settings page's Integration section (admin view), or read it off any workspace URL |
+| `D6E_INIT_REFRESH_TOKEN` | Value of the `auth-refresh` cookie for a logged-in workspace-ADMIN session on `D6E_BASE_URL`                                                      |
 
 `D6E_INIT_REFRESH_TOKEN` is intentionally separate from the regular
 `auth-refresh` cookie this app issues to end users. The script can
@@ -77,7 +79,7 @@ during setup.
 authenticates via the SvelteKit `cookies` store rather than the
 `Authorization` header. This is asymmetric with `execute-by-intent`
 (Bearer) — track the upstream behaviour at
-[`packages/frontend/src/routes/api/workspace-prompt-rules/+server.ts`](https://github.com/d6e-ai/d6e/blob/main/packages/frontend/src/routes/api/workspace-prompt-rules/+server.ts).
+[`packages/frontend/src/routes/api/workspace-prompt-rules/+server.ts`](https://gitlab.com/cauchye/d6e-ai/d6e/-/blob/main/packages/frontend/src/routes/api/workspace-prompt-rules/+server.ts).
 
 The cookie content is the same access token used for Bearer requests,
 just transported on a different header. The init script obtains the

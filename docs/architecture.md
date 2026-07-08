@@ -1,14 +1,15 @@
 # Architecture
 
 This document describes the request flow, deployment topology, and
-directory layout of `d6e-ai-keiri-example`.
+directory layout of the `d6e-custom-frontend-skills` reference app
+(an AI accounting / keiri frontend).
 
 ## Sequence
 
 ```mermaid
 sequenceDiagram
     participant User as User Browser
-    participant App as d6e-ai-keiri-example<br/>(SvelteKit)
+    participant App as d6e-custom-frontend-skills<br/>(SvelteKit)
     participant Auth as d6e-auth<br/>(${D6E_AUTH_URL})
     participant Token as d6e instance<br/>(${D6E_BASE_URL}/api/v1/auth/token)
     participant Files as d6e instance API<br/>(/api/v1/workspaces/{wsId}/files)

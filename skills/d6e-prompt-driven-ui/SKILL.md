@@ -1,6 +1,6 @@
 ---
 name: d6e-prompt-driven-ui
-description: Designs prompt-driven UI for d6e-connected frontends — workspace prompt rules that emit `kind`-discriminated JSON inside fenced code blocks, Zod-based parsers with markdown fallback, revision flows driven by XML tags, and the interactive "scenario append" pattern for adding new behaviour without touching the base prompt. Use when authoring a new `scripts/prompts/*.md` file, when the LLM is drifting off-contract, when adding a new task type to an existing prompt, or when the frontend should render structured JSON cards instead of raw assistant text.
+description: Designs prompt-driven UI for d6e-connected frontends — workspace prompt rules that emit `kind`-discriminated JSON inside fenced code blocks, Zod-based parsers with markdown fallback, revision flows driven by XML tags, the interactive "scenario append" pattern for adding new behaviour without touching the base prompt, and the Drive Sync mirror pattern that lets a scenario search the `drive_files` SQL projection (and lazily `materialize` Drive bytes through `d6e_read_drive_file`) before generating output. Use when authoring a new `scripts/prompts/*.md` file, when the LLM is drifting off-contract, when adding a new task type to an existing prompt, when the frontend should render structured JSON cards instead of raw assistant text, or when extending a prompt to look up reference data from the workspace's Google Drive mirror.
 ---
 
 # d6e Prompt-Driven UI
@@ -42,6 +42,9 @@ Apply this skill when the user says:
 - "Bake the freee company ID into the prompt automatically"
 - "新しい AI 経理 bot シナリオを追加したい"
 - "JSON スキーマでフロントの表示を制御するプロンプトを書きたい"
+- "Let the model search Google Drive before producing a journal entry"
+- "Have the prompt walk the synced Drive mirror to find a similar past receipt"
+- "Drive 同期のミラーから過去仕訳の根拠書類を引いてきたい"
 
 ## Core Concepts
 
@@ -90,6 +93,74 @@ final text, so the prompt must make scenarios distinguishable from
 the input alone, and every scenario must agree on whether a JSON
 fence is required. If a "general Q&A" scenario sneaks a JSON block
 through, the parser will turn it into a card and confuse the user.
+
+### Optional: Drive mirror lookup scenario
+
+If the workspace has the Google Drive sync mirror enabled (see the
+[`d6e-workspace-api-client`](../d6e-workspace-api-client/SKILL.md)
+skill for the underlying REST endpoints), a scenario can pull
+reference data from the mirrored Drive structure **before** producing
+its primary JSON. The mirror exposes a workspace-scoped SQL table —
+`drive_files` (in the workspace's `user_data` schema) — that is safe
+to read via `d6e_sql`, plus a `d6e_read_drive_file` MCP tool that
+caches the actual bytes into `storage_file` on demand.
+
+Typical use cases in an accounting frontend:
+
+- "Find last year's invoice from this vendor and reuse its account
+  mapping" → search `drive_files` by vendor + year, read the cached
+  PDF / image, then emit `kind: "journal"`.
+- "Locate the contract that backs this expense" → pivot from the
+  receipt's `description` to a candidate path in `drive_files`,
+  surface a link in `warnings[]` so the user can verify before
+  registering.
+
+```mermaid
+flowchart LR
+  User["User uploads a receipt"] --> LLM
+  LLM["LLM (execute-by-intent)"] -->|"SELECT path, drive_id\nFROM drive_files\nWHERE name ILIKE …"| Sql["d6e_sql"]
+  Sql --> Mirror[("frontend.drive_sync_node\n→ user_data.…drive_files")]
+  Mirror --> LLM
+  LLM -->|"drive_id → storage_file_id"| Read["d6e_read_drive_file"]
+  Read --> Storage[("storage_file (BYTEA cache)")]
+  Storage --> LLM
+  LLM -->|"kind:\"journal\" JSON"| Frontend["custom frontend"]
+```
+
+Prompt-level rules to keep this scenario well-behaved:
+
+1. **Use a distinct trigger sentinel.** Tie the scenario to either an
+   XML tag (`<drive_lookup_request>` / `<drive_followup>`) or an
+   explicit user phrase ("過去の領収書から探して"); never trigger off
+   the presence of attachments alone, otherwise it would shadow
+   Scenario A.
+2. **Search before deciding.** Make the prompt require the LLM to
+   issue at least one `SELECT ... FROM drive_files WHERE path LIKE …`
+   before reading any bytes. The mirror is intentionally cheap; the
+   `read` step is the expensive one.
+3. **Fall back gracefully when the mirror is empty.** The
+   `drive_files` table will simply return zero rows when Drive Sync is
+   not enabled or has not yet completed an initial sync. The prompt
+   must instruct the LLM to detect this case and **fall back to the
+   ordinary Scenario A / C behaviour** (with a `warnings` entry
+   "Drive ミラーが未設定のため過去事例から推定できませんでした")
+   rather than failing the turn.
+4. **Reuse `kind: "journal"` whenever the final output is a journal.**
+   Avoid introducing a fresh `kind` for the lookup turn unless the UI
+   needs to render a distinct "search results" card; mixing too many
+   kinds inflates the parser and renderer surface for marginal UX
+   gain.
+5. **Anchor the SQL examples.** Embed at least one literal
+   `SELECT … FROM drive_files WHERE …` block in the prompt. Models
+   are far more likely to issue valid `d6e_sql` calls when they have
+   seen a concrete example, including the projection's column names
+   (`drive_id`, `path`, `mime_type`, `is_folder`, `size`,
+   `modified_time`, `file_id`).
+
+See [`scripts/prompts/drive-mirror-followup-prompt.md`](../../scripts/prompts/drive-mirror-followup-prompt.md)
+in this repo for an end-to-end "scenario append" template that
+implements this pattern on top of `ai-keiri-prompt.md` without
+touching the base scenarios.
 
 ### `kind` as the JSON discriminator
 
@@ -184,6 +255,14 @@ not to be guessed at runtime. The pattern is:
 This keeps the deploy-time prompt fixed and human-reviewed while
 deferring the workspace-specific binding to a one-time interactive
 dance the user can rerun whenever the bindings need to change.
+
+**Prerequisite**: any scenario that calls a SaaS API through
+`d6e_call_external_api` (freee, Google Drive, …) only works after a
+workspace admin has connected that provider on the d6e console's
+workspace settings page (SaaS integrations section). The connection
+cannot be created from the custom frontend or from the prompt — if
+`d6e_list_saas_credentials` comes back empty, the activation flow must
+stop and tell the user to connect the provider in the console first.
 
 ## Quick Start
 
@@ -501,6 +580,9 @@ will create a duplicate.
 - [ ] Scenario-append files are explicitly outside `npm run init` (they go through the d6e chat UI, not `/api/workspace-prompt-rules`).
 - [ ] Scenario-append guardrails forbid `d6e_delete_workspace_prompt_rule` and any rewrite of the existing scenarios.
 - [ ] Placeholder substitution (`{{company_id}}`, etc.) is verified before write — the activation flow asserts no `{{` remains in the final body.
+- [ ] Any scenario that consults the Drive mirror has a documented fallback path for "Drive Sync not enabled" / "`drive_files` is empty" so the turn cannot hard-fail.
+- [ ] Drive-mirror scenarios issue at least one `SELECT … FROM drive_files WHERE …` before invoking `d6e_read_drive_file`, and the prompt enumerates the projection's column names verbatim.
+- [ ] Drive-mirror scenarios reuse an existing `kind` (e.g. `journal`) whenever the user-visible output is the same shape as a non-Drive scenario; new `kind` values are reserved for genuinely new card layouts.
 
 ## Best Practices
 
@@ -623,7 +705,20 @@ Someone hand-edited the rule in the d6e admin UI. The SHA-256 hashes
 no longer match, so the script POSTs a fresh copy. Resolve by
 deleting the orphan via the admin UI, then re-run `npm run init`.
 
+### Registration scenario reports "provider not connected" (or `d6e_call_external_api` 404s)
+
+The workspace has no stored credential for the SaaS provider the
+scenario needs. This is a console-side setup step, not a prompt bug: a
+workspace admin opens the d6e console's workspace settings page → SaaS
+integrations, and connects the provider (OAuth consent for freee /
+Google Workspace etc., API token dialog for Chatwork / Zendesk). Then
+rerun the scenario. The prompt should treat an empty
+`d6e_list_saas_credentials` result as a hard stop with exactly this
+instruction.
+
 ## Related Skills
 
-- [`d6e-workspace-api-client`](../d6e-workspace-api-client/SKILL.md) — Provides `execute-by-intent` and the idempotent prompt-rule registration that this skill's prompts ride on.
+- [`d6e-workspace-api-client`](../d6e-workspace-api-client/SKILL.md) — Provides `execute-by-intent` and the idempotent prompt-rule registration that this skill's prompts ride on, plus the Drive Sync mirror endpoints that the optional drive-lookup scenario sits on top of.
 - [`d6e-auth-integration`](../d6e-auth-integration/SKILL.md) — Authenticates the `execute-by-intent` calls that ferry these prompts to the LLM.
+- External: [`d6e-saas-google-workspace`](https://gitlab.com/cauchye/d6e-ai/d6e/-/blob/main/packages/skills/d6e-saas-google-workspace/SKILL.md) — Lives in the `d6e` repo and documents the `drive_files` SQL projection plus the `d6e_read_drive_file` MCP tool that any Drive-mirror scenario in this skill ultimately consumes.
+- Background: [Custom frontends and the d6e instance — how they relate](https://gitlab.com/cauchye/d6e-ai/d6e-custom-frontend-skills/-/blob/main/docs/frontend-and-instance.md) ([日本語版](https://gitlab.com/cauchye/d6e-ai/d6e-custom-frontend-skills/-/blob/main/docs/frontend-and-instance.ja.md)) — where the prompt rules and workspace this skill assumes actually live, and how they can be provisioned by a Plugin.
