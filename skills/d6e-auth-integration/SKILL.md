@@ -287,6 +287,13 @@ added-by email, created-at) on the franchise portal instance card.
 The deprecated `ALLOWED_REDIRECT_URIS` env var on the d6e instance is
 no longer read — only d6e-auth validates redirect URIs.
 
+When the same callback URL is registered in **multiple workspaces**,
+the authorize URL must include `d6e_workspace_id=<D6E_WORKSPACE_ID>`.
+d6e-auth uses this to issue a token scoped to the correct workspace
+instead of picking the earliest registration. `buildAuthorizeUrl` in
+this repo adds the parameter automatically from `D6E_WORKSPACE_ID`.
+Omitting it keeps the legacy behavior (earliest registration wins).
+
 ### Step 2: `/auth/login`
 
 ```ts
@@ -374,7 +381,7 @@ POST-only by design so an `<img src="...">` cannot force a sign-out.
 
 | Function                                             | Purpose                                                                                                                                           |
 | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `buildAuthorizeUrl(caller, state)`                   | Returns `${D6E_AUTH_URL}/auth/login?client_id&redirect_uri&state&response_type=code`. `client_id` is the d6e instance's own client id.            |
+| `buildAuthorizeUrl(caller, state)`                   | Returns `${D6E_AUTH_URL}/auth/login?client_id&redirect_uri&state&response_type=code&d6e_workspace_id`. `client_id` is the d6e instance's own client id; `d6e_workspace_id` is taken from `D6E_WORKSPACE_ID` so per-workspace redirect registrations resolve to the correct scope. |
 | `exchangeAuthorizationCode(caller, code)`            | POSTs `grant_type=authorization_code` (+ `redirect_uri`) to the **d6e instance**. Sends no client credentials; returns an instance-audience pair. |
 | `refreshAccessTokenViaBaseUrl(caller, refreshToken)` | Per-session refresh — POSTs `grant_type=refresh_token` to the **d6e instance**. No `client_id` needed.                                            |
 | `createOauthState()`                                 | 32 bytes from `crypto.getRandomValues`, base64url-encoded.                                                                                        |
