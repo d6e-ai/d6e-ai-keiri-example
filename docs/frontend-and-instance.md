@@ -153,9 +153,9 @@ This reference app does exactly that — see
 
 For Plugin development itself (STF runtimes, instant-run, workflow
 definitions, marketplace publishing), see the
-[d6e-plugin-skills](https://gitlab.com/cauchye/d6e-ai/d6e-plugin-skills)
+[d6e-plugin-skills](https://github.com/d6e-ai/d6e-plugin-skills)
 repository and its
-[local AI agent development guide](https://gitlab.com/cauchye/d6e-ai/d6e-plugin-skills/-/blob/main/docs/local-ai-development.md).
+[local AI agent development guide](https://github.com/d6e-ai/d6e-plugin-skills/blob/main/docs/local-ai-development.md).
 
 ## Console, Plugin, or custom frontend?
 
@@ -194,5 +194,5 @@ repository and its
 - [`d6e-api-integration.md`](./d6e-api-integration.md) — exact API shapes
 - [`workspace-setup.md`](./workspace-setup.md) — provisioning the
   workspace this app depends on
-- [d6e-plugin-skills — local AI agent development guide](https://gitlab.com/cauchye/d6e-ai/d6e-plugin-skills/-/blob/main/docs/local-ai-development.md)
+- [d6e-plugin-skills — local AI agent development guide](https://github.com/d6e-ai/d6e-plugin-skills/blob/main/docs/local-ai-development.md)
   — the server-side counterpart to this document

@@ -79,7 +79,7 @@ during setup.
 authenticates via the SvelteKit `cookies` store rather than the
 `Authorization` header. This is asymmetric with `execute-by-intent`
 (Bearer) — track the upstream behaviour at
-[`packages/frontend/src/routes/api/workspace-prompt-rules/+server.ts`](https://gitlab.com/cauchye/d6e-ai/d6e/-/blob/main/packages/frontend/src/routes/api/workspace-prompt-rules/+server.ts).
+[`packages/frontend/src/routes/api/workspace-prompt-rules/+server.ts`](https://github.com/d6e-ai/d6e/blob/main/packages/frontend/src/routes/api/workspace-prompt-rules/+server.ts).
 
 The cookie content is the same access token used for Bearer requests,
 just transported on a different header. The init script obtains the

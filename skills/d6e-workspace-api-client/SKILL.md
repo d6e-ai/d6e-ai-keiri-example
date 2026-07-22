@@ -121,7 +121,7 @@ API Keys) works everywhere the table says `Authorization: Bearer <jwt>`
 — it carries the same user identity without the ~1 h JWT expiry. The
 cookie-transport routes (`/api/chat-sessions`,
 `/api/workspace-prompt-rules`) still need the real session cookie. See
-[local-ai-development.md](https://gitlab.com/cauchye/d6e-ai/d6e-plugin-skills/-/blob/main/docs/local-ai-development.md)
+[local-ai-development.md](https://github.com/d6e-ai/d6e-plugin-skills/blob/main/docs/local-ai-development.md)
 for the full local-development workflow.
 
 ### Fetch wrapper conventions
@@ -585,9 +585,9 @@ Key points:
 > Available on d6e instances that have the Drive Sync mirror feature
 > enabled (introduced in `feat/drive-sync-mirror`). Implementation lives
 > in
-> [`packages/api/src/routes/v1/drive_sync.rs`](https://gitlab.com/cauchye/d6e-ai/d6e/-/blob/main/packages/api/src/routes/v1/drive_sync.rs)
+> [`packages/api/src/routes/v1/drive_sync.rs`](https://github.com/d6e-ai/d6e/blob/main/packages/api/src/routes/v1/drive_sync.rs)
 > on the d6e side; the [`d6e-saas-google-workspace`
-> SKILL](https://gitlab.com/cauchye/d6e-ai/d6e/-/blob/main/packages/skills/d6e-saas-google-workspace/SKILL.md)
+> SKILL](https://github.com/d6e-ai/d6e/blob/main/packages/skills/d6e-saas-google-workspace/SKILL.md)
 > documents the LLM-facing view (`drive_files` projection +
 > `d6e_read_drive_file` MCP tool).
 
@@ -723,7 +723,7 @@ Response: `{ status, headers, body }` mirroring the upstream reply
 > Available on d6e instances that have the pending-invitation feature
 > enabled (introduced in `feat(workspace): support pending invitations
 for unregistered users`). Implementation lives in
-> [`packages/api/src/routes/v1/workspace_invitation.rs`](https://gitlab.com/cauchye/d6e-ai/d6e/-/blob/main/packages/api/src/routes/v1/workspace_invitation.rs).
+> [`packages/api/src/routes/v1/workspace_invitation.rs`](https://github.com/d6e-ai/d6e/blob/main/packages/api/src/routes/v1/workspace_invitation.rs).
 
 The same `POST /api/v1/workspaces/{id}/members` endpoint that has
 always created memberships now creates a **pending invitation** row
@@ -938,5 +938,5 @@ frontend.
 
 - [`d6e-auth-integration`](../d6e-auth-integration/SKILL.md) — Provides the `event.locals.accessToken` that every wrapper here consumes, plus the membership probe semantics that interact with pending invitations.
 - [`d6e-prompt-driven-ui`](../d6e-prompt-driven-ui/SKILL.md) — Designs the LLM contract that `executeByIntent` carries and the workspace prompt rule that `init-workspace.mjs` registers; also covers the prompt patterns that read the `drive_files` projection backed by these Drive Sync endpoints.
-- External: [`d6e-saas-google-workspace`](https://gitlab.com/cauchye/d6e-ai/d6e/-/blob/main/packages/skills/d6e-saas-google-workspace/SKILL.md) — Lives in the `d6e` repo and documents the `drive_files` SQL projection plus the `d6e_read_drive_file` MCP tool that sit on top of the Drive Sync endpoints described here.
-- Background: [Custom frontends and the d6e instance — how they relate](https://gitlab.com/cauchye/d6e-ai/d6e-custom-frontend-skills/-/blob/main/docs/frontend-and-instance.md) ([日本語版](https://gitlab.com/cauchye/d6e-ai/d6e-custom-frontend-skills/-/blob/main/docs/frontend-and-instance.ja.md)) — why every call in this skill goes through the instance's public APIs, and how the frontend relates to the instance and to Plugins.
+- External: [`d6e-saas-google-workspace`](https://github.com/d6e-ai/d6e/blob/main/packages/skills/d6e-saas-google-workspace/SKILL.md) — Lives in the `d6e` repo and documents the `drive_files` SQL projection plus the `d6e_read_drive_file` MCP tool that sit on top of the Drive Sync endpoints described here.
+- Background: [Custom frontends and the d6e instance — how they relate](https://github.com/d6e-ai/d6e-custom-frontend-skills/blob/main/docs/frontend-and-instance.md) ([日本語版](https://github.com/d6e-ai/d6e-custom-frontend-skills/blob/main/docs/frontend-and-instance.ja.md)) — why every call in this skill goes through the instance's public APIs, and how the frontend relates to the instance and to Plugins.

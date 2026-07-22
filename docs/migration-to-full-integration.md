@@ -91,9 +91,9 @@ Concretely:
   (`template.yaml` + `stfs/*` + `files/*`) inside this repository so the
   app can be installed into any workspace via the console's
   **Install from URL** (or listed on the marketplace later through a
-  [d6e-plugin-registry](https://gitlab.com/cauchye/d6e-ai/d6e-plugin-registry)
-  merge request) — see the
-  [`d6e-plugin-skills` examples](https://gitlab.com/cauchye/d6e-ai/d6e-plugin-skills)
+  [d6e-plugin-registry](https://github.com/d6e-ai/d6e-plugin-registry)
+  pull request) — see the
+  [`d6e-plugin-skills` examples](https://github.com/d6e-ai/d6e-plugin-skills)
   (e.g. `examples/accounting-assistant/`) for complete reference layouts.
 - The `template.yaml` should declare:
   - A `receipt-to-journal` workflow that orchestrates OCR → category

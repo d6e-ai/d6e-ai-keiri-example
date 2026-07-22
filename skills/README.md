@@ -41,9 +41,9 @@ section at the bottom of each `SKILL.md` cross-links them.
 ## Installation
 
 ```bash
-npx skills add https://gitlab.com/cauchye/d6e-ai/d6e-custom-frontend-skills --skill d6e-auth-integration
-npx skills add https://gitlab.com/cauchye/d6e-ai/d6e-custom-frontend-skills --skill d6e-workspace-api-client
-npx skills add https://gitlab.com/cauchye/d6e-ai/d6e-custom-frontend-skills --skill d6e-prompt-driven-ui
+npx skills add d6e-ai/d6e-custom-frontend-skills --skill d6e-auth-integration
+npx skills add d6e-ai/d6e-custom-frontend-skills --skill d6e-workspace-api-client
+npx skills add d6e-ai/d6e-custom-frontend-skills --skill d6e-prompt-driven-ui
 ```
 
 After installation, type `@skills` in Cursor Composer (or the
@@ -52,11 +52,8 @@ equivalent in Claude Code) to verify the skills are available.
 ## Discovery
 
 The [skills CLI](https://skills.sh) discovers the
-`skills/<name>/SKILL.md` files in this repository directly from the
-GitLab URL above. This repository is hosted at
-<https://gitlab.com/cauchye/d6e-ai/d6e-custom-frontend-skills>, so always
-install with the full URL — the `owner/repo` shorthand only resolves
-against github.com and does not work for this repository.
+`skills/<name>/SKILL.md` files in this repository directly from GitHub.
+The `owner/repo` shorthand is supported.
 
 ## Why These Three?
 

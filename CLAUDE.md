@@ -188,7 +188,6 @@ Conventions when editing them:
   (e.g. `[\`src/lib/server/d6e-client.ts\`](../../src/lib/server/d6e-client.ts)`).
   When you change a referenced module, update the citing skill in
   the same PR.
-- Skills are installed straight from this repository's GitLab URL:
-  `npx skills add https://gitlab.com/cauchye/d6e-ai/d6e-custom-frontend-skills --skill <name>`.
-  The repository is hosted on GitLab, so the GitHub `owner/repo`
-  shorthand does not work — always document the full URL.
+- Skills are installed straight from this repository on GitHub:
+  `npx skills add d6e-ai/d6e-custom-frontend-skills --skill <name>`.
+  The GitHub `owner/repo` shorthand is supported.
