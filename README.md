@@ -1,7 +1,7 @@
 # d6e-custom-frontend-skills
 
 A reusable [Agent Skills](./skills/README.md) package for building
-custom frontends on top of the [d6e](https://gitlab.com/cauchye/d6e-ai/d6e)
+custom frontends on top of the [d6e](https://github.com/d6e-ai/d6e)
 platform — paired with a working reference implementation: a thin
 AI accounting (AI 経理 / keiri) frontend that demonstrates how to
 call d6e's `/api/workflows/execute-by-intent` endpoint end-to-end.
@@ -32,9 +32,9 @@ the ones you need.
 ### Install in your agent
 
 ```bash
-npx skills add https://gitlab.com/cauchye/d6e-ai/d6e-custom-frontend-skills --skill d6e-auth-integration
-npx skills add https://gitlab.com/cauchye/d6e-ai/d6e-custom-frontend-skills --skill d6e-workspace-api-client
-npx skills add https://gitlab.com/cauchye/d6e-ai/d6e-custom-frontend-skills --skill d6e-prompt-driven-ui
+npx skills add d6e-ai/d6e-custom-frontend-skills --skill d6e-auth-integration
+npx skills add d6e-ai/d6e-custom-frontend-skills --skill d6e-workspace-api-client
+npx skills add d6e-ai/d6e-custom-frontend-skills --skill d6e-prompt-driven-ui
 ```
 
 Once installed, the agent can guide you end-to-end through wiring an
@@ -44,9 +44,8 @@ architecture the reference app below demonstrates.
 
 The [skills CLI](https://skills.sh) discovers the
 `skills/<name>/SKILL.md` files in this repository directly from the
-GitLab URL above. This repository is hosted on GitLab, so the full URL
-is required — the `owner/repo` shorthand only resolves against
-github.com and does not work here.
+GitHub repository above. The `owner/repo` shorthand is supported by the
+skills CLI.
 
 ## What the reference app does
 

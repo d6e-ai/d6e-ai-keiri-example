@@ -151,9 +151,9 @@ d6e を拡張します。
 
 Plugin 開発そのもの（STF ランタイム・instant-run・ワークフロー定義・
 マーケットプレイス公開）については
-[d6e-plugin-skills](https://gitlab.com/cauchye/d6e-ai/d6e-plugin-skills)
+[d6e-plugin-skills](https://github.com/d6e-ai/d6e-plugin-skills)
 リポジトリと、その
-[ローカル AI エージェント開発ガイド](https://gitlab.com/cauchye/d6e-ai/d6e-plugin-skills/-/blob/main/docs/local-ai-development.ja.md)
+[ローカル AI エージェント開発ガイド](https://github.com/d6e-ai/d6e-plugin-skills/blob/main/docs/local-ai-development.ja.md)
 を参照してください。
 
 ## コンソールか、Plugin か、カスタムフロントエンドか
@@ -195,5 +195,5 @@ Plugin 開発そのもの（STF ランタイム・instant-run・ワークフロ�
 - [`d6e-api-integration.md`](./d6e-api-integration.md) — API の正確な形
 - [`workspace-setup.md`](./workspace-setup.md) — 本アプリが依存する
   ワークスペースの構築手順
-- [d6e-plugin-skills — ローカル AI エージェント開発ガイド](https://gitlab.com/cauchye/d6e-ai/d6e-plugin-skills/-/blob/main/docs/local-ai-development.ja.md)
+- [d6e-plugin-skills — ローカル AI エージェント開発ガイド](https://github.com/d6e-ai/d6e-plugin-skills/blob/main/docs/local-ai-development.ja.md)
   — 本ドキュメントのサーバー側対応版
