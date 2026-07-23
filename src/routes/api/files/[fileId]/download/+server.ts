@@ -15,6 +15,10 @@
 //   - Upstream fetch is bounded by DOWNLOAD_TIMEOUT_MS combined with the
 //     client abort signal (timeout -> 504, client abort -> 499), so a
 //     stalled d6e cannot hold the function until the host's max duration.
+//   - If the bound fires after the 200 + headers were already sent, the
+//     response stream is errored (abnormal connection teardown) so the
+//     client sees a failed download — never a truncated body under a
+//     success status.
 //
 // Limitations:
 //   - Does not buffer the full file — streams upstream.body (see platform-timeouts).
@@ -100,5 +104,42 @@ export const GET: RequestHandler = async (event) => {
 		return new Response('Empty response from storage API', { status: 502 });
 	}
 
-	return new Response(upstream.body, { status: 200, headers: outHeaders });
+	// The 200 status line is committed once streaming starts, so a timeout or
+	// upstream failure mid-body cannot become a 504. Pump the body ourselves
+	// and error the stream instead of ending it, so the connection is torn
+	// down abnormally and the client reports a failed download rather than
+	// silently keeping a truncated file.
+	const reader = upstream.body.getReader();
+	const body = new ReadableStream<Uint8Array>({
+		async pull(controller) {
+			let chunk: ReadableStreamReadResult<Uint8Array>;
+			try {
+				chunk = await reader.read();
+			} catch (err) {
+				let detail: string;
+				if (event.request.signal.aborted) {
+					detail = 'client aborted mid-stream';
+					console.warn(`[${CALLER_TAG}] ${detail} (fileId=${fileId})`);
+				} else if (timeoutSignal.aborted) {
+					detail = `upstream timed out after ${DOWNLOAD_TIMEOUT_MS / 1000}s mid-stream`;
+					console.error(`[${CALLER_TAG}] ${detail} (fileId=${fileId})`);
+				} else {
+					detail = err instanceof Error ? err.message : String(err);
+					console.error(`[${CALLER_TAG}] upstream stream failed (fileId=${fileId}): ${detail}`);
+				}
+				controller.error(new Error(`Download interrupted (fileId=${fileId}): ${detail}`));
+				return;
+			}
+			if (chunk.done) {
+				controller.close();
+			} else {
+				controller.enqueue(chunk.value);
+			}
+		},
+		cancel(reason) {
+			void reader.cancel(reason).catch(() => {});
+		}
+	});
+
+	return new Response(body, { status: 200, headers: outHeaders });
 };
