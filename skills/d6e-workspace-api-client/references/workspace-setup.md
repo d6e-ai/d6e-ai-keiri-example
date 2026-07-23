@@ -51,10 +51,10 @@ in the skill's Core Concepts section.
 | `PATCH` | `…/setup/skills/{skillId}` | Bearer (admin) | Update skill |
 | `DELETE` | `…/setup/skills/{skillId}` | Bearer (admin) | Delete skill |
 
-Skill file content and install-from-GitHub flows in the d6e console use
-additional SvelteKit BFF routes (`/api/workspaces/{id}/skills/upload`, etc.).
-Custom frontends typically ship skills via repo bootstrap scripts rather than
-runtime upload.
+Skill file content, discover, upload, and install-from-GitHub flows use
+additional Cookie BFF routes under `/api/workspaces/{id}/skills/*`. Custom
+frontends may proxy those routes or use this Rust metadata API — see
+[workspace-skills-bff.md](./workspace-skills-bff.md).
 
 ---
 
@@ -102,8 +102,10 @@ Only one template may be active at a time. Activate/deactivate are admin-only.
 | `GET` | `…/setup/saas-credentials` | List connected providers |
 
 Returns provider id, connection status, and metadata — **never** raw OAuth
-tokens or refresh secrets. Connecting providers requires the d6e console OAuth
-flow; there is no API to inject credentials from a custom frontend.
+tokens or refresh secrets. **List only on Rust** — connecting, enabling,
+disabling, and deleting credentials uses Cookie BFF routes documented in
+[saas-oauth-bff.md](./saas-oauth-bff.md). Custom frontends can drive the full
+OAuth/PAT flow by proxying those routes (same-origin with `auth-token` cookie).
 
 Use listed providers to validate [saas-proxy.md](./saas-proxy.md) calls
 (`provider` field must match a connected credential).

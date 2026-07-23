@@ -129,7 +129,8 @@ See [workspace-setup.md](./workspace-setup.md).
 
 The d6e console UI also exposes equivalent features via Cookie BFF routes
 (`/api/workspace-prompt-rules`, `/api/workspaces/{id}/chat-templates`, …).
-Custom frontends typically use the Rust setup API or their own DB — see
+Custom frontends may use Rust setup API (Bearer), Cookie BFF proxies, or their
+own DB — see [console-bff-catalog.md](./console-bff-catalog.md) and
 [workspace-setup.md](./workspace-setup.md).
 
 ---
@@ -268,6 +269,94 @@ Pin server-side from `D6E_WORKSPACE_ID`.
 Both require `workspace_id` in JSON body. Binary delivery uses the two-step
 pattern — [download-two-step.md](./download-two-step.md).
 
+Connect providers via Cookie BFF before calling — [saas-oauth-bff.md](./saas-oauth-bff.md).
+
+---
+
+## SaaS OAuth + credentials (Cookie BFF)
+
+Full OAuth/PAT connect flow on the d6e instance. Stores encrypted tokens in
+`frontend.saas_credential` (same table Rust saas-proxy reads).
+
+| Method | Path | Auth | Purpose | Detail |
+| ------ | ---- | ---- | ------- | ------ |
+| GET | `/api/saas-auth/providers` | Cookie | List configured OAuth providers | [saas-oauth-bff.md](./saas-oauth-bff.md) |
+| GET | `/api/saas-auth/{provider}/authorize?workspaceId=` | Cookie | Start OAuth redirect | [saas-oauth-bff.md](./saas-oauth-bff.md) |
+| GET | `/api/saas-auth/{provider}/callback` | Cookie | OAuth callback + token storage | [saas-oauth-bff.md](./saas-oauth-bff.md) |
+| POST | `/api/saas-auth/{provider}/token` | Cookie | Save PAT/API token providers | [saas-oauth-bff.md](./saas-oauth-bff.md) |
+| GET | `/api/saas-credentials?workspaceId=` | Cookie | List credentials (metadata) | [saas-oauth-bff.md](./saas-oauth-bff.md) |
+| GET | `/api/workspaces/{id}/saas-credentials` | Cookie | Same list (path workspace) | [saas-oauth-bff.md](./saas-oauth-bff.md) |
+| PATCH | `/api/saas-credentials/{id}` | Cookie | Enable/disable credential | [saas-oauth-bff.md](./saas-oauth-bff.md) |
+| DELETE | `/api/saas-credentials/{id}` | Cookie | Delete credential + linked MCP servers | [saas-oauth-bff.md](./saas-oauth-bff.md) |
+
+Rust list-only equivalent: `GET …/setup/saas-credentials` (Bearer).
+
+---
+
+## Chat streaming (Cookie BFF)
+
+| Method | Path | Auth | Purpose | Detail |
+| ------ | ---- | ---- | ------- | ------ |
+| POST | `/api/chat` | Cookie | UIMessage stream + MCP tools + SQL HITL | [chat-streaming.md](./chat-streaming.md) |
+
+Related: `/api/chat-sessions/*`, `/api/chat-sessions/generate-title` — see
+[console-bff-catalog.md](./console-bff-catalog.md).
+
+---
+
+## WebSocket (Rust)
+
+| Method | Path | Auth | Purpose | Detail |
+| ------ | ---- | ---- | ------- | ------ |
+| GET | `/ws` | Bearer + `X-Workspace-ID` | RowInserted/Updated/Deleted events | [websocket.md](./websocket.md) |
+
+Not under `/api/v1`. No Cookie transport.
+
+---
+
+## Workspace skills BFF + public skill fetch
+
+| Method | Path | Auth | Purpose | Detail |
+| ------ | ---- | ---- | ------- | ------ |
+| GET/POST | `/api/workspaces/{id}/skills` | Cookie (admin writes) | List / create skills | [workspace-skills-bff.md](./workspace-skills-bff.md) |
+| GET/PATCH/DELETE | `/api/workspaces/{id}/skills/{skillId}` | Cookie (admin) | Skill CRUD | [workspace-skills-bff.md](./workspace-skills-bff.md) |
+| POST | `/api/workspaces/{id}/skills/discover` | Cookie (admin) | Preview remote repo skills | [workspace-skills-bff.md](./workspace-skills-bff.md) |
+| POST | `/api/workspaces/{id}/skills/upload` | Cookie (admin) | Install from file | [workspace-skills-bff.md](./workspace-skills-bff.md) |
+| POST | `/api/workspaces/{id}/skills/install` | Cookie (admin) | Install from URL | [workspace-skills-bff.md](./workspace-skills-bff.md) |
+| GET | `/api/v1/skills/{name}?workspaceId=` | None | Merged skill markdown | [workspace-skills-bff.md](./workspace-skills-bff.md) |
+| GET | `/api/v1/skills/{name}/files/{path}?workspaceId=` | None | Skill reference file | [workspace-skills-bff.md](./workspace-skills-bff.md) |
+
+Rust metadata twin: `…/setup/skills/*` — [workspace-setup.md](./workspace-setup.md).
+
+---
+
+## MCP servers, memories, workspace settings, verify (Cookie BFF)
+
+| Method | Path | Auth | Purpose | Detail |
+| ------ | ---- | ---- | ------- | ------ |
+| GET/POST | `/api/mcp-servers` | Cookie | List / register external MCP servers | [memories-mcp-settings.md](./memories-mcp-settings.md) |
+| PATCH/DELETE | `/api/mcp-servers/{id}` | Cookie | Update / delete MCP server | [memories-mcp-settings.md](./memories-mcp-settings.md) |
+| GET/PATCH/DELETE | `/api/memories` | Cookie | User memory CRUD | [memories-mcp-settings.md](./memories-mcp-settings.md) |
+| GET/PATCH | `/api/workspace-settings/{workspaceId}` | Cookie | sqlApprovalMode, memoryEnabled, etc. | [memories-mcp-settings.md](./memories-mcp-settings.md) |
+| POST | `/api/verify` | Cookie | LLM hallucination / tool-integrity check | [memories-mcp-settings.md](./memories-mcp-settings.md) |
+
+---
+
+## MCP tools ↔ REST map
+
+No HTTP MCP endpoint for custom frontends. See
+[mcp-rest-map.md](./mcp-rest-map.md) for tool-to-REST mapping and chat /
+execute-by-intent access paths.
+
+---
+
+## Console BFF dual-route catalog
+
+Full Cookie vs Rust `/api/v1` comparison (sql, files, pinned-charts,
+chat-templates, title-rule, dashboard, redirect-uris, embeddings, transcribe,
+table-column-order, …):
+[console-bff-catalog.md](./console-bff-catalog.md).
+
 ---
 
 ## Auth (me, token)
@@ -279,17 +368,19 @@ pattern — [download-two-step.md](./download-two-step.md).
 
 ---
 
-## SvelteKit Cookie surfaces (chat-sessions, workspace-prompt-rules)
+## SvelteKit Cookie surfaces (chat-sessions, workspace-prompt-rules, chat)
 
 These routes live on the **d6e instance** SvelteKit app, not under `/api/v1`.
-Custom frontends implement their own equivalents or call Rust setup API.
+See [console-bff-catalog.md](./console-bff-catalog.md) for the full dual-route
+inventory.
 
 | Method | Path | Auth | Purpose | Detail |
 | ------ | ---- | ---- | ------- | ------ |
+| POST | `/api/chat` | Cookie | UIMessage LLM stream + MCP | [chat-streaming.md](./chat-streaming.md) |
 | GET | `/api/chat-sessions?workspaceId=` | Cookie | List chat sessions | [auth-header-matrix.md](./auth-header-matrix.md) |
 | POST | `/api/chat-sessions` | Cookie | Create session | — |
 | GET/PATCH/DELETE | `/api/chat-sessions/{id}` | Cookie | Session CRUD | — |
-| POST | `/api/chat-sessions/generate-title` | Cookie | AI title generation | — |
+| POST | `/api/chat-sessions/generate-title` | Cookie | AI title generation | [console-bff-catalog.md](./console-bff-catalog.md) |
 | GET | `/api/workspace-prompt-rules?workspaceId=` | Cookie (admin) | List prompt rules | [workspace-setup.md](./workspace-setup.md) |
 | POST | `/api/workspace-prompt-rules` | Cookie (admin) | Create prompt rule | [workspace-setup.md](./workspace-setup.md) |
 | PATCH/DELETE | `/api/workspace-prompt-rules/{ruleId}` | Cookie (admin) | Update / delete rule | [workspace-setup.md](./workspace-setup.md) |
@@ -321,6 +412,13 @@ Platform timeout guidance: [platform-timeouts.md](./platform-timeouts.md).
 
 | Document | Topic |
 | -------- | ----- |
+| [saas-oauth-bff.md](./saas-oauth-bff.md) | **OAuth/PAT connect** — Cookie BFF; fixes "console only" myth |
+| [chat-streaming.md](./chat-streaming.md) | **POST /api/chat** — UIMessage stream, MCP, SQL HITL, memory, compaction |
+| [mcp-rest-map.md](./mcp-rest-map.md) | MCP tools ↔ REST equivalents; MCP-only tools |
+| [websocket.md](./websocket.md) | **GET /ws** — Bearer real-time row events |
+| [workspace-skills-bff.md](./workspace-skills-bff.md) | Skills discover/upload/install BFF + public skill fetch |
+| [memories-mcp-settings.md](./memories-mcp-settings.md) | MCP servers, memories, workspace-settings, verify |
+| [console-bff-catalog.md](./console-bff-catalog.md) | **Master BFF table** — Cookie vs Rust dual routes |
 | [download-two-step.md](./download-two-step.md) | Storage download streaming proxy |
 | [saas-proxy-download.md](./saas-proxy-download.md) | External file → storage metadata |
 | [file-storage.md](./file-storage.md) | Upload/list/delete |

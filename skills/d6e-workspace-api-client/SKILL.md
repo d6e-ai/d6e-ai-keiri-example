@@ -140,6 +140,13 @@ Detailed guides (read before implementing):
 | Document | Contents |
 | -------- | -------- |
 | [references/api-catalog.md](references/api-catalog.md) | **Master index** — every useful `/api/v1` + BFF endpoint; auth column; detail links |
+| [references/console-bff-catalog.md](references/console-bff-catalog.md) | Cookie BFF vs Rust dual routes — sql, files, chat, settings, … |
+| [references/saas-oauth-bff.md](references/saas-oauth-bff.md) | SaaS OAuth/PAT connect — Cookie BFF (custom FE can drive connect) |
+| [references/chat-streaming.md](references/chat-streaming.md) | POST /api/chat UIMessage stream — MCP, SQL HITL, memory, compaction |
+| [references/mcp-rest-map.md](references/mcp-rest-map.md) | MCP tools ↔ REST; MCP-only tools; chat vs execute-by-intent |
+| [references/websocket.md](references/websocket.md) | GET /ws Bearer — RowInserted/Updated/Deleted |
+| [references/workspace-skills-bff.md](references/workspace-skills-bff.md) | Skills discover/upload/install BFF + public skill markdown pull |
+| [references/memories-mcp-settings.md](references/memories-mcp-settings.md) | MCP servers, memories, workspace-settings, POST /api/verify |
 | [references/auth-header-matrix.md](references/auth-header-matrix.md) | Path vs header workspace resolution; Cookie vs Bearer |
 | [references/download-two-step.md](references/download-two-step.md) | **Critical** — saas-proxy-download → storage id → streaming GET proxy; no 302 |
 | [references/saas-proxy-download.md](references/saas-proxy-download.md) | Full request/response schema, editor permission, `suggested_filename`, metadata |
@@ -162,6 +169,12 @@ Detailed guides (read before implementing):
 
 Also documented in this skill:
 
+- **Chat streaming** — `POST /api/chat` UIMessage MCP agent (Cookie); see
+  [chat-streaming.md](references/chat-streaming.md). Not interchangeable with
+  execute-by-intent.
+- **SaaS OAuth connect** — Cookie BFF `/api/saas-auth/*` — custom frontends
+  can drive connect via same-origin proxy; see
+  [saas-oauth-bff.md](references/saas-oauth-bff.md).
 - **Chat sessions** — Cookie auth CRUD; title conventions in
   [`src/lib/journal-title.ts`](../../src/lib/journal-title.ts). Cookie vs Bearer:
   [auth-header-matrix.md](references/auth-header-matrix.md) and
@@ -236,7 +249,7 @@ export const POST: RequestHandler = async (event) => {
 | `executeByIntent` 402 | Billing / entitlement gate | Surface message; admin fixes billing |
 | `executeByIntent` 504 timedOut | Wrapper shorter than LLM run | Lower timeout or use [async jobs](references/async-intent-jobs.md) |
 | Async job 429 | 3 concurrent jobs / workspace | Wait or cancel |
-| `saas-proxy` 404 credential | Provider not connected in console | Connect in d6e settings first |
+| `saas-proxy` 404 credential | Provider not connected | Connect via [saas-oauth-bff.md](references/saas-oauth-bff.md) |
 | Download fails in browser | Called d6e URL directly | [download-two-step.md](references/download-two-step.md) |
 | OOM on serverless download | Buffered full body | Stream + [platform-timeouts.md](references/platform-timeouts.md) |
 | Drive `/sync` 200 but no data | Background job | Poll `/status` |

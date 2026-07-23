@@ -10,8 +10,10 @@ for streaming bytes to the browser.
 
 ## Prerequisites
 
-- Workspace admin must connect the provider in d6e console (SaaS integrations).
-  No API to create credentials from a custom frontend.
+- A credential for the target provider must exist in `frontend.saas_credential`
+  (connected via OAuth or PAT). Custom frontends **can** drive connect through
+  Cookie BFF routes on the d6e instance — see
+  [saas-oauth-bff.md](./saas-oauth-bff.md) (not "console only").
 - Caller must be a workspace **member**.
 - Provider string must match a connected credential (e.g. `google_workspace`,
   `freee`, `notion`).
@@ -108,7 +110,7 @@ exfiltration or override.
 
 | Status | Cause |
 | ------ | ----- |
-| 404 | No credential for provider — connect in console first |
+| 404 | No credential for provider — connect via [saas-oauth-bff.md](./saas-oauth-bff.md) first |
 | 403 | Not a workspace member |
 | 413 / 400 | Response or request body exceeds limit |
 | 502 | Upstream SaaS error (check `status` in response body) |
@@ -146,6 +148,7 @@ const res = await fetch(`${getD6eUrl(caller)}/api/v1/saas-proxy`, {
 
 ## Related
 
+- [saas-oauth-bff.md](./saas-oauth-bff.md) — OAuth/PAT connect flow (Cookie BFF)
 - [saas-proxy-download.md](./saas-proxy-download.md) — binary download path
 - [drive-sync.md](./drive-sync.md) — mirrored Drive vs live API calls
 - [size-limits.md](./size-limits.md) — caps table

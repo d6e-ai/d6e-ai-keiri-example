@@ -79,14 +79,81 @@ Storage upload/download failures with `403` often indicate `storage_write` or
 | `PATCH` | `/api/v1/policy-groups/{id}` | Update group |
 | `DELETE` | `/api/v1/policy-groups/{id}` | Soft delete |
 
-Groups organize policies and map to workspace members. Admin UIs typically:
+Groups organize policies and map workspace **users** and **STFs** (workflow
+automation identities) to shared permissions. Policies reference
+`policy_group_id`; members inherit access when their user id or STF id appears
+in the group.
 
-1. List groups
-2. Assign members to groups (workspace membership UI)
-3. CRUD policies per group
+### Auth
 
-Exact member↔group assignment may be managed via d6e console or SQL depending
-on your deployment — policies reference `policy_group_id`.
+Same as policies — Bearer + `X-Workspace-ID`; editor permission required for
+POST/PATCH/DELETE.
+
+### Create payload (`POST /api/v1/policy-groups`)
+
+```json
+{
+  "name": "Finance editors",
+  "user_ids": ["<user-uuid>", "<user-uuid>"],
+  "stf_ids": ["<stf-uuid>"]
+}
+```
+
+| Field | Type | Notes |
+| ----- | ---- | ----- |
+| `name` | string | Group display name |
+| `user_ids` | uuid[] | Workspace member user IDs with this group's permissions |
+| `stf_ids` | uuid[] | STF IDs (workflow runners) included in the group |
+
+Both arrays may be empty (group with no members yet). Response is the full
+`policy_group` row including generated `id`, `workspace_id`, timestamps.
+
+### Update payload (`PATCH /api/v1/policy-groups/{id}`)
+
+All fields optional — omitted fields are unchanged:
+
+```json
+{
+  "name": "Renamed group",
+  "user_ids": ["<user-uuid>"],
+  "stf_ids": []
+}
+```
+
+| Field | Type | Notes |
+| ----- | ---- | ----- |
+| `name` | string? | New name |
+| `user_ids` | uuid[]? | **Replaces** entire user membership list |
+| `stf_ids` | uuid[]? | **Replaces** entire STF membership list |
+
+PATCH sets `user_ids` / `stf_ids` atomically — send the full desired membership
+arrays, not a diff. To add one user, GET the group first, append the id, then
+PATCH.
+
+### Response shape (GET list / GET one)
+
+```json
+{
+  "id": "<uuid>",
+  "workspace_id": "<uuid>",
+  "name": "Finance editors",
+  "user_ids": ["…"],
+  "stf_ids": ["…"],
+  "created_at": "…",
+  "updated_at": "…",
+  "deleted_at": null
+}
+```
+
+MCP equivalents: `d6e_create_policy_group`, `d6e_update_policy_group` — see
+[mcp-rest-map.md](./mcp-rest-map.md).
+
+Admin UIs typically:
+
+1. List groups (`GET /api/v1/policy-groups`)
+2. Resolve member/STF pickers from `GET …/members` and `GET /api/v1/stfs`
+3. POST/PATCH groups with `user_ids[]` / `stf_ids[]`
+4. CRUD policies referencing `policy_group_id`
 
 ---
 
