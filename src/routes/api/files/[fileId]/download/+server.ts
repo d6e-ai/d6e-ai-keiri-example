@@ -12,6 +12,9 @@
 //   - Sets Authorization + X-Workspace-ID on upstream GET (path ws id ignored).
 //   - Forwards Content-Type, Content-Disposition, Content-Length on success.
 //   - Optional Accept header from the browser is relayed upstream.
+//   - Upstream fetch is bounded by DOWNLOAD_TIMEOUT_MS combined with the
+//     client abort signal (timeout -> 504, client abort -> 499), so a
+//     stalled d6e cannot hold the function until the host's max duration.
 //
 // Limitations:
 //   - Does not buffer the full file — streams upstream.body (see platform-timeouts).
@@ -25,6 +28,9 @@ import type { RequestHandler } from './$types';
 
 const CALLER_TAG = '/api/files/[fileId]/download';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// Bounds the whole upstream transfer (headers + streamed body); sized per
+// the platform-timeouts guidance (60-120s for tens of MB on slow links).
+const DOWNLOAD_TIMEOUT_MS = 120_000;
 
 export const GET: RequestHandler = async (event) => {
 	const accessToken = requireAccessToken(event, CALLER_TAG);
@@ -47,16 +53,27 @@ export const GET: RequestHandler = async (event) => {
 		upstreamHeaders.Accept = accept;
 	}
 
+	// AbortSignal.any() requires Node.js 20.3+, same as buildCombinedSignal
+	// in src/lib/server/d6e-client.ts.
+	const timeoutSignal = AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS);
+	const upstreamSignal = AbortSignal.any([event.request.signal, timeoutSignal]);
+
 	let upstream: Response;
 	try {
 		upstream = await fetch(upstreamUrl, {
 			headers: upstreamHeaders,
-			signal: event.request.signal
+			signal: upstreamSignal
 		});
 	} catch (err) {
 		if (event.request.signal.aborted) {
 			console.warn(`[${CALLER_TAG}] request aborted by client (fileId=${fileId})`);
 			return new Response('Client Closed Request', { status: 499 });
+		}
+		if (timeoutSignal.aborted) {
+			console.error(
+				`[${CALLER_TAG}] upstream timed out after ${DOWNLOAD_TIMEOUT_MS / 1000}s (fileId=${fileId})`
+			);
+			return new Response('Storage API timed out', { status: 504 });
 		}
 		const msg = err instanceof Error ? err.message : String(err);
 		console.error(`[${CALLER_TAG}] fetch failed (fileId=${fileId}): ${msg}`);
