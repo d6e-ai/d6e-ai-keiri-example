@@ -47,6 +47,55 @@ forwards a DELETE to the same Rust endpoint to clean up the orphan.
 [d6e `packages/frontend/src/routes/api/workspaces/[workspaceId]/files/upload/+server.ts`](https://github.com/d6e-ai/d6e/blob/main/packages/frontend/src/routes/api/workspaces/%5BworkspaceId%5D/files/upload/+server.ts)
 (the d6e frontend's own proxy of the same Rust endpoint).
 
+## 1b. File download — two-step flow
+
+The browser **cannot** call `${D6E_BASE_URL}/api/v1/.../download` directly
+because the JWT is in an HTTP-only cookie. Use a same-origin streaming proxy
+— never 302-redirect to d6e.
+
+### Step 1 — obtain a `storage_file` id (when needed)
+
+If the file is not already in workspace storage (e.g. pulled from Google
+Drive), server code calls:
+
+```
+POST ${D6E_BASE_URL}/api/v1/saas-proxy-download
+Authorization: Bearer <access_token>
+{ workspace_id, provider, method, path, suggested_filename?, metadata? }
+```
+
+On upstream **2xx**, the JSON response includes
+`{ id, filename, content_type, size, created_at }`. On upstream non-2xx,
+the response has `{ status, headers, error_body }` and **no** storage row.
+
+See
+[`skills/d6e-workspace-api-client/references/saas-proxy-download.md`](../skills/d6e-workspace-api-client/references/saas-proxy-download.md)
+and
+[`references/download-two-step.md`](../skills/d6e-workspace-api-client/references/download-two-step.md).
+
+Files uploaded via section 1 already have an `id` — skip step 1.
+
+### Step 2 — stream bytes through the app proxy
+
+```
+GET ${D6E_BASE_URL}/api/v1/workspaces/{workspaceId}/files/{fileId}/download
+Authorization: Bearer <access_token>
+X-Workspace-ID: <UUID>     ← required; path {workspaceId} is ignored by handler
+Accept: application/pdf    ← optional
+```
+
+**This app's proxy:**
+[`src/routes/api/files/[fileId]/download/+server.ts`](../src/routes/api/files/%5BfileId%5D/download/+server.ts)
+pins `D6E_WORKSPACE_ID` from env, attaches Bearer + `X-Workspace-ID`, and
+streams `upstream.body` to the browser.
+
+**Upstream reference (d6e console):**
+[d6e download proxy](https://github.com/d6e-ai/d6e/blob/main/packages/frontend/src/routes/api/workspaces/%5BworkspaceId%5D/files/%5BfileId%5D/download/+server.ts).
+
+**Size caps:** 100 MB for `saas-proxy-download`, 1 GB for storage download,
+10 MB for JSON `saas-proxy` — see
+[`references/size-limits.md`](../skills/d6e-workspace-api-client/references/size-limits.md).
+
 ## 2. Natural-language workflow — `/api/workflows/execute-by-intent`
 
 **Hosted by:** d6e SvelteKit frontend, exposed under
@@ -572,8 +621,10 @@ pastes the activation file again.
 
 | Endpoint                                              | Header / Body                          | Source                                                                  |
 | ----------------------------------------------------- | -------------------------------------- | ----------------------------------------------------------------------- |
-| `POST /api/v1/workspaces/{id}/files/multipart`        | `Authorization: Bearer <access_token>` | `event.locals.accessToken` (auth-access cookie via hooks.server.ts)     |
-| `DELETE /api/v1/workspaces/{id}/files/{fileId}`       | `Authorization: Bearer <access_token>` | same as above                                                           |
+| `POST /api/v1/workspaces/{id}/files/multipart`        | `Authorization: Bearer <access_token>` + `X-Workspace-ID` | `event.locals.accessToken` |
+| `GET /api/v1/workspaces/{id}/files/{fileId}/download` | `Authorization: Bearer <access_token>` + `X-Workspace-ID` | same — proxied via [`/api/files/{fileId}/download`](../src/routes/api/files/%5BfileId%5D/download/+server.ts) |
+| `POST /api/v1/saas-proxy-download`                  | `Authorization: Bearer <access_token>` | same — step 1 of two-step download (see §1b) |
+| `DELETE /api/v1/workspaces/{id}/files/{fileId}`       | `Authorization: Bearer <access_token>` + `X-Workspace-ID` | same as above                                                           |
 | `GET /api/v1/workspaces/{id}`                         | `Authorization: Bearer <access_token>` | same as above (only called from `/auth/callback`)                       |
 | `POST /api/workflows/execute-by-intent`               | `Authorization: Bearer <access_token>` | same as above                                                           |
 | `* /api/workflows/execute-by-intent/jobs[/{id}[/cancel]]` | `Authorization: Bearer <access_token>` | same as above — async job API (create / poll / cancel)                  |
