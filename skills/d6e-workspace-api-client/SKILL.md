@@ -1,6 +1,6 @@
 ---
 name: d6e-workspace-api-client
-description: Builds the server-side proxy layer that lets a custom frontend talk to a d6e workspace — file upload/list/download/delete (two-step saas-proxy-download + streaming proxy), workspace SQL execute/preview, named workflow CRUD/execute, workspace member admin, execute-by-intent (sync and async job API), chat-session CRUD, workspace prompt rule registration, SaaS API calls via saas-proxy (+ binary saas-proxy-download), Google Drive sync mirror, and pending-invitation admin. Use when adding a `/api/*` route that talks to d6e, when implementing file download via same-origin streaming proxy (never 302 to D6E_BASE_URL), when deploying on Vercel maxDuration/waitUntil or Cloudflare Workers CPU limits, when surfacing SQL POLICY_DENIED to the UI, when sync execute-by-intent times out and you need async jobs with poll/cancel/heartbeat, or when calling freee/Google/Notion with workspace-stored credentials.
+description: Builds the server-side proxy layer that lets a custom frontend talk to a d6e workspace — see references/api-catalog.md for the full endpoint inventory. Covers file upload/list/download/delete (two-step saas-proxy-download + streaming proxy), workspace SQL execute/preview, named workflow CRUD/execute, workspace member admin, execute-by-intent (sync and async job API), chat-session CRUD, workspace prompt rule registration, SaaS API calls via saas-proxy (+ binary saas-proxy-download), Google Drive sync mirror, and pending-invitation admin. Use when adding a `/api/*` route that talks to d6e, when implementing file download via same-origin streaming proxy (never 302 to D6E_BASE_URL), when deploying on Vercel maxDuration/waitUntil or Cloudflare Workers CPU limits, when surfacing SQL POLICY_DENIED to the UI, when sync execute-by-intent times out and you need async jobs with poll/cancel/heartbeat, or when calling freee/Google/Notion with workspace-stored credentials.
 ---
 
 # d6e Workspace API Client
@@ -139,27 +139,37 @@ Detailed guides (read before implementing):
 
 | Document | Contents |
 | -------- | -------- |
+| [references/api-catalog.md](references/api-catalog.md) | **Master index** — every useful `/api/v1` + BFF endpoint; auth column; detail links |
+| [references/auth-header-matrix.md](references/auth-header-matrix.md) | Path vs header workspace resolution; Cookie vs Bearer |
 | [references/download-two-step.md](references/download-two-step.md) | **Critical** — saas-proxy-download → storage id → streaming GET proxy; no 302 |
 | [references/saas-proxy-download.md](references/saas-proxy-download.md) | Full request/response schema, editor permission, `suggested_filename`, metadata |
+| [references/saas-proxy.md](references/saas-proxy.md) | JSON SaaS proxy, 10 MB cap, `file_id` multipart, vs saas-proxy-download |
 | [references/file-storage.md](references/file-storage.md) | List/get/multipart/JSON upload/delete/download; `X-Workspace-ID`; silent null metadata |
-| [references/platform-timeouts.md](references/platform-timeouts.md) | Vercel `maxDuration`/`waitUntil` vs Cloudflare ~30s CPU; streaming patterns |
+| [references/documents.md](references/documents.md) | Document CRUD + versions; header-scoped; list omits content |
 | [references/sql.md](references/sql.md) | Execute/preview, `uuidv7()`, 23-char tables, `POLICY_DENIED`, no GET /tables |
-| [references/auth-header-matrix.md](references/auth-header-matrix.md) | Path vs header workspace resolution; full endpoint table |
+| [references/embeddings.md](references/embeddings.md) | Column / file / table embeddings; generate, status, search, regenerate |
+| [references/workflows.md](references/workflows.md) | Workflow CRUD + execute; list-by-name pattern; Docker STF 120s tip |
+| [references/stfs-and-effects.md](references/stfs-and-effects.md) | STFs, versions, secrets, instant-run, describe; Effects + versions |
+| [references/policies.md](references/policies.md) | Policies + policy-groups CRUD; operations/modes; editor permission |
+| [references/pinned-charts.md](references/pinned-charts.md) | Dashboard charts; `sql_query` + `chart_type`; visible-only list |
+| [references/members-and-invitations.md](references/members-and-invitations.md) | Members CRUD; `LAST_ADMIN`; discriminated POST; invitation admin |
+| [references/workspace-setup.md](references/workspace-setup.md) | `/setup/*` Bearer routes — prompt-rules, skills, templates, dashboard, saas-credentials |
+| [references/api-keys-and-audit.md](references/api-keys-and-audit.md) | API keys (session-only); audit-logs GET with filters |
+| [references/drive-sync.md](references/drive-sync.md) | Drive sync config/roots/sync/status/materialize/read/picker |
+| [references/platform-timeouts.md](references/platform-timeouts.md) | Vercel `maxDuration`/`waitUntil` vs Cloudflare ~30s CPU; streaming patterns |
 | [references/size-limits.md](references/size-limits.md) | 10 MB JSON proxy / 100 MB download / 1 GB storage; app upload caps |
 | [references/async-intent-jobs.md](references/async-intent-jobs.md) | Create/poll/cancel, heartbeat, concurrency, guardrails |
 
-Also documented in this skill (no separate reference file):
+Also documented in this skill:
 
-- **Drive Sync** — `/api/v1/drive-sync/*`; pin `workspace_id` in body/query.
-  Upstream: [`drive_sync.rs`](https://github.com/d6e-ai/d6e/blob/main/packages/api/src/routes/v1/drive_sync.rs).
-- **SaaS JSON proxy** — `POST /api/v1/saas-proxy`; 10 MB cap. Prerequisite:
-  connect provider in d6e console settings.
-- **Workspace data APIs** — documents, embeddings, pinned charts, STFs, effects,
-  policies, members, invitations. Inventory in
-  [`d6e-cloud.ts`](https://gitlab.com/cauchye/d6e-ai/d6e/-/blob/main/packages/frontend/src/lib/server/d6e-cloud.ts).
 - **Chat sessions** — Cookie auth CRUD; title conventions in
-  [`src/lib/journal-title.ts`](../../src/lib/journal-title.ts).
+  [`src/lib/journal-title.ts`](../../src/lib/journal-title.ts). Cookie vs Bearer:
+  [auth-header-matrix.md](references/auth-header-matrix.md) and
+  [api-catalog.md § SvelteKit Cookie surfaces](references/api-catalog.md).
 - **Integration doc** — [docs/d6e-api-integration.md](../../docs/d6e-api-integration.md).
+- **Canonical console wrappers** —
+  [`d6e-cloud.ts`](https://gitlab.com/cauchye/d6e-ai/d6e/-/blob/main/packages/frontend/src/lib/server/d6e-cloud.ts)
+  (implementation reference; prefer [api-catalog.md](references/api-catalog.md) for discovery).
 
 ### `src/lib/server/d6e-client.ts` API (this repo)
 
