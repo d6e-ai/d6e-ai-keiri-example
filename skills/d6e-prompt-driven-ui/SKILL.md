@@ -1,6 +1,6 @@
 ---
 name: d6e-prompt-driven-ui
-description: Designs prompt-driven UI for d6e-connected frontends — workspace prompt rules that emit `kind`-discriminated JSON inside fenced code blocks, Zod-based parsers with markdown fallback, revision flows driven by XML tags, the interactive "scenario append" pattern for adding new behaviour without touching the base prompt, and the Drive Sync mirror pattern that lets a scenario search the `drive_files` SQL projection (and lazily `materialize` Drive bytes through `d6e_read_drive_file`) before generating output. Use when authoring a new `scripts/prompts/*.md` file, when the LLM is drifting off-contract, when adding a new task type to an existing prompt, when the frontend should render structured JSON cards instead of raw assistant text, or when extending a prompt to look up reference data from the workspace's Google Drive mirror.
+description: Designs prompt-driven UI for d6e-connected frontends — workspace prompt rules that emit `kind`-discriminated JSON inside fenced code blocks, Zod-based parsers with markdown fallback, revision flows driven by XML tags, the interactive "scenario append" pattern, Drive Sync mirror lookups, async intent jobs with toolTrace polling for long runs, and rendering execute-by-intent `files[]` outputs (Excel etc.) via same-origin download proxies. Use when authoring a new `scripts/prompts/*.md` file, when the LLM is drifting off-contract, when adding a new task type to an existing prompt, when the frontend should render structured JSON cards instead of raw assistant text, when sync execute-by-intent times out, or when extending a prompt to look up reference data from the workspace's Google Drive mirror.
 ---
 
 # d6e Prompt-Driven UI
@@ -21,6 +21,11 @@ three layers that make that work reliably:
 3. **Render layer** — Switch on `parsed.kind` to pick a typed
    component; fall back to a markdown render of the raw assistant
    text so the card never goes blank.
+
+Long agent runs and binary outputs sit beside this JSON contract — use
+async jobs + `toolTrace` polling ([async-jobs-ui.md](references/async-jobs-ui.md))
+and same-origin file download for `files[]` / storage ids
+([output-files.md](references/output-files.md)).
 
 The same workspace rule also defines **revision flows** (the user
 edits the previous output by sending a follow-up message wrapped in
@@ -257,12 +262,13 @@ deferring the workspace-specific binding to a one-time interactive
 dance the user can rerun whenever the bindings need to change.
 
 **Prerequisite**: any scenario that calls a SaaS API through
-`d6e_call_external_api` (freee, Google Drive, …) only works after a
-workspace admin has connected that provider on the d6e console's
-workspace settings page (SaaS integrations section). The connection
-cannot be created from the custom frontend or from the prompt — if
-`d6e_list_saas_credentials` comes back empty, the activation flow must
-stop and tell the user to connect the provider in the console first.
+`d6e_call_external_api` (freee, Google Drive, …) requires a stored credential
+for that provider. Connect via the d6e instance Cookie BFF OAuth flow (custom
+frontends can proxy — see
+[d6e-workspace-api-client `saas-oauth-bff.md`](../d6e-workspace-api-client/references/saas-oauth-bff.md))
+or the d6e console workspace settings → SaaS integrations UI. If
+`d6e_list_saas_credentials` comes back empty, the activation flow must stop and
+tell the user to connect the provider first.
 
 ## Quick Start
 
@@ -708,13 +714,20 @@ deleting the orphan via the admin UI, then re-run `npm run init`.
 ### Registration scenario reports "provider not connected" (or `d6e_call_external_api` 404s)
 
 The workspace has no stored credential for the SaaS provider the
-scenario needs. This is a console-side setup step, not a prompt bug: a
-workspace admin opens the d6e console's workspace settings page → SaaS
-integrations, and connects the provider (OAuth consent for freee /
-Google Workspace etc., API token dialog for Chatwork / Zendesk). Then
-rerun the scenario. The prompt should treat an empty
+scenario needs. Connect the provider via Cookie BFF OAuth (see
+[saas-oauth-bff.md](../d6e-workspace-api-client/references/saas-oauth-bff.md))
+or the d6e console workspace settings → SaaS integrations. Then rerun the
+scenario. The prompt should treat an empty
 `d6e_list_saas_credentials` result as a hard stop with exactly this
 instruction.
+
+## References
+
+| Document | Contents |
+| -------- | -------- |
+| [references/async-jobs-ui.md](references/async-jobs-ui.md) | Async `execute-by-intent/jobs` for long runs; `toolTrace` polling; soft-deleted `inputFileRefs`; links to [async-intent-jobs.md](../d6e-workspace-api-client/references/async-intent-jobs.md) and [download-two-step.md](../d6e-workspace-api-client/references/download-two-step.md) when tools materialize files |
+| [references/output-files.md](references/output-files.md) | Rendering `IntentResponse.files[]` (inline base64 vs storage id) through same-origin `/api/files/{id}/download` proxies |
+| [d6e-workspace-api-client `chat-streaming.md`](../d6e-workspace-api-client/references/chat-streaming.md) | Full interactive chat (`POST /api/chat`) with MCP — use when building conversational UI beyond execute-by-intent JSON contracts |
 
 ## Related Skills
 
