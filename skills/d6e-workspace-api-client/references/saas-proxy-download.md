@@ -155,6 +155,17 @@ export async function saasProxyDownload(
       { timedOut: false, aborted: false }
     );
   }
+  // HTTP-OK from d6e does not mean the upstream call succeeded: on upstream
+  // non-2xx the body is { status, headers, error_body } with NO storage id.
+  // Reject here so callers never reach step-2 download without an `id`.
+  if (typeof json.id !== 'string') {
+    throw new D6eClientError(
+      `saasProxyDownload upstream failure (caller=${caller}, provider=${payload.provider}, upstreamStatus=${json.status})`,
+      json.status ?? 502,
+      JSON.stringify(json.error_body ?? json).slice(0, 500),
+      { timedOut: false, aborted: false }
+    );
+  }
   return json;
 }
 ```
