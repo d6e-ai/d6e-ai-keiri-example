@@ -54,6 +54,10 @@ export const GET: RequestHandler = async (event) => {
 			signal: event.request.signal
 		});
 	} catch (err) {
+		if (event.request.signal.aborted) {
+			console.warn(`[${CALLER_TAG}] request aborted by client (fileId=${fileId})`);
+			return new Response('Client Closed Request', { status: 499 });
+		}
 		const msg = err instanceof Error ? err.message : String(err);
 		console.error(`[${CALLER_TAG}] fetch failed (fileId=${fileId}): ${msg}`);
 		return new Response('Failed to reach storage API', { status: 502 });
