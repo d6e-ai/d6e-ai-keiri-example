@@ -26,7 +26,7 @@ the ones you need.
 | Skill                                                                    | Concern                                                                                                                                                                  |
 | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | [`d6e-auth-integration`](./skills/d6e-auth-integration/SKILL.md)         | Instance-brokered OAuth2 login (plus a standalone-client alternative), session cookies, transparent refresh, workspace allow-list.                                       |
-| [`d6e-workspace-api-client`](./skills/d6e-workspace-api-client/SKILL.md) | Bearer vs cookie header matrix, the `caller + accessToken + AbortSignal` wrapper convention in `src/lib/server/d6e-client.ts`, async intent job API (create / poll / cancel for long-running runs), and the idempotent prompt-rule bootstrap. |
+| [`d6e-workspace-api-client`](./skills/d6e-workspace-api-client/SKILL.md) | Bearer vs cookie header matrix, the `caller + accessToken + AbortSignal` wrapper convention in `src/lib/server/d6e-client.ts`, workspace SQL / files / workflows / members / documents / embeddings, async intent job API (create / poll / cancel for long-running runs), and the idempotent prompt-rule bootstrap. |
 | [`d6e-prompt-driven-ui`](./skills/d6e-prompt-driven-ui/SKILL.md)         | `kind`-discriminated JSON inside fenced code blocks, Zod parse with markdown fallback, XML-tag revision flows, scenario-append activation via the d6e chat UI.           |
 
 ### Install in your agent

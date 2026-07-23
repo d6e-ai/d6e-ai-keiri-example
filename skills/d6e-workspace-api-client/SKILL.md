@@ -1,6 +1,6 @@
 ---
 name: d6e-workspace-api-client
-description: Builds the server-side proxy layer that lets a custom frontend talk to a d6e workspace — file upload, file delete, workflow execution via `execute-by-intent` (synchronous and async job API), chat-session CRUD, workspace prompt rule registration, workspace membership probes, SaaS API calls via the d6e saas-proxy, Google Drive sync mirror endpoints, and workspace pending-invitation admin CRUD. Use when adding a new `/api/*` route that talks to d6e, when designing a fetch wrapper that needs to surface timeouts/aborts cleanly, when seeing 401 on `/api/chat-sessions` or 402 from `execute-by-intent`, when the synchronous execute-by-intent times out and you need the async job API, when building a progress display with tool-trace polling, when adding a cancel button for long-running AI jobs, when calling freee/Google/Notion APIs with workspace-stored credentials, when writing a bootstrap script that registers workspace prompt rules idempotently, when wiring a Drive Sync UI (config / roots / sync / materialize / picker), or when building an admin members page that needs to list and cancel pending email invitations.
+description: Builds the server-side proxy layer that lets a custom frontend talk to a d6e workspace — file upload/list/download/delete, workspace SQL execute/preview, named workflow CRUD/execute, workspace member admin, Markdown documents, column/file/table embeddings, pinned dashboard charts, execute-by-intent (sync and async job API), chat-session CRUD, workspace prompt rule registration, workspace membership probes, SaaS API calls via the d6e saas-proxy (+ binary download), Google Drive sync mirror endpoints, and workspace pending-invitation admin CRUD. Use when adding a new `/api/*` route that talks to d6e, when building a data browser or admin members page, when wiring expense-check-style workflow lookup+execute, when surfacing SQL policy errors to the UI, when designing a fetch wrapper that needs to surface timeouts/aborts cleanly, when seeing 401 on `/api/chat-sessions` or 402 from `execute-by-intent`, when the synchronous execute-by-intent times out and you need the async job API, when building a progress display with tool-trace polling, when adding a cancel button for long-running AI jobs, when calling freee/Google/Notion APIs with workspace-stored credentials, when writing a bootstrap script that registers workspace prompt rules idempotently, when wiring a Drive Sync UI (config / roots / sync / materialize / picker), or when building an admin members page that needs to list and cancel pending email invitations.
 ---
 
 # d6e Workspace API Client
@@ -37,6 +37,24 @@ frontend and a d6e workspace. It covers:
   adapter-node process) with a configurable wall-clock cap (default 30
   minutes). This is the recommended path for Vercel-hosted frontends
   where the sync endpoint exceeds `maxDuration`.
+- The **workspace SQL API** under `/api/v1/workspaces/{id}/sql` —
+  Bearer execute + preview endpoints that auto-prefix logical table
+  names into `user_data.ws_{uuid}_{name}`, enforce row-level policies,
+  and return structured `{ error, code }` bodies (`POLICY_DENIED`,
+  `DDL_FORBIDDEN`, `PARSE_ERROR`, …).
+- **File storage beyond upload/delete** — list metadata, fetch
+  metadata by id, and stream binary downloads (1 GB upstream cap; pin
+  `X-Workspace-ID` even though the path carries `{id}`).
+- **Named workflow CRUD + execute** under `/api/v1/workflows` —
+  header-scoped (`X-Workspace-ID` required); the expense-check pattern
+  lists by name then POSTs the input JSON to `/{id}/execute` and
+  receives the last step's output JSON.
+- **Workspace member admin** — list/add/patch/remove under
+  `/workspaces/{id}/members` (mutations admin-only; `LAST_ADMIN` guard
+  on demote/remove).
+- **Markdown documents**, **embeddings** (column / file / table-row),
+  and **pinned dashboard charts** — see
+  [Workspace data, workflows, and admin APIs](#workspace-data-workflows-and-admin-apis).
 - Optional integrations newer d6e instances expose:
   - **Google Drive Sync Mirror** under `/api/v1/drive-sync/*` — Bearer
     endpoints whose `workspace_id` is supplied in the body or query
@@ -54,6 +72,14 @@ Apply this skill when the user says:
 
 - "Add a new endpoint that talks to d6e"
 - "How do I upload files to a d6e workspace from my app?"
+- "Run SQL from my custom frontend's server proxy" / "ワークスペース SQL をサーバ側から実行したい"
+- "Preview SQL before mutating data" / "UPDATE 前に SQL をプレビューしたい"
+- "List or download files already uploaded to the workspace"
+- "Call a named d6e workflow directly (expense-check pattern)" / "ワークフローを名前で探して execute したい"
+- "Build an admin members page (list, invite, change role, remove)" / "メンバー管理 UI を作りたい"
+- "CRUD Markdown docs from my app" / "ドキュメント API をフロントから使いたい"
+- "Generate embeddings or run similarity search on a table column"
+- "Why does `POST /api/v1/workflows/.../execute` return 400 Missing X-Workspace-ID?"
 - "Why does `/api/chat-sessions` give me 401 when Bearer works elsewhere?"
 - "Wrap the d6e API with timeouts and abort handling"
 - "Make `npm run init` idempotent"
@@ -97,6 +123,14 @@ cookies and never reaches client-side JavaScript.
 | ------------------------------------------------------------------ | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `POST ${D6E_BASE_URL}/api/v1/workspaces/{wsId}/files/multipart`    | `Authorization: Bearer <jwt>` + `X-Workspace-ID: <wsId>` | `multipart/form-data` body with `file` + `metadata` fields                                                                                          |
 | `DELETE ${D6E_BASE_URL}/api/v1/workspaces/{wsId}/files/{fileId}`   | `Authorization: Bearer <jwt>` + `X-Workspace-ID: <wsId>` | 404 is treated as success (already gone)                                                                                                            |
+| `GET ${D6E_BASE_URL}/api/v1/workspaces/{wsId}/files`               | `Authorization: Bearer <jwt>` + `X-Workspace-ID: <wsId>` | List metadata only. Handler resolves workspace from **header**, not path.                                                                           |
+| `GET ${D6E_BASE_URL}/api/v1/workspaces/{wsId}/files/{fileId}`      | `Authorization: Bearer <jwt>` + `X-Workspace-ID: <wsId>` | Metadata by id.                                                                                                                                     |
+| `GET ${D6E_BASE_URL}/api/v1/workspaces/{wsId}/files/{fileId}/download` | `Authorization: Bearer <jwt>` + `X-Workspace-ID: <wsId>` | Binary stream. Upstream cap 1 GB. Proxy — never expose the upstream URL.                                                                        |
+| `POST ${D6E_BASE_URL}/api/v1/workspaces/{wsId}/sql`                | `Authorization: Bearer <jwt>`                            | Workspace from **path**; membership checked. `X-Workspace-ID` optional (must match if sent).                                                        |
+| `POST ${D6E_BASE_URL}/api/v1/workspaces/{wsId}/sql/preview`        | `Authorization: Bearer <jwt>`                            | Same as execute — preview does not evaluate runtime policy conditions.                                                                              |
+| `* ${D6E_BASE_URL}/api/v1/workflows[/{id}[/execute]]`              | `Authorization: Bearer <jwt>` + `X-Workspace-ID: <wsId>` | **Required** — workspace is not in the URL. Missing header → 400.                                                                                   |
+| `GET ${D6E_BASE_URL}/api/v1/workspaces/{wsId}/members`             | `Authorization: Bearer <jwt>`                            | Any workspace member.                                                                                                                               |
+| `POST/PATCH/DELETE …/workspaces/{wsId}/members[/{memberId}]`       | `Authorization: Bearer <jwt>` (workspace **admin**)      | `POST` may return `{ membership }` or `{ invitation }`. `DELETE`/`PATCH` demotion guarded by `LAST_ADMIN`.                                          |
 | `GET ${D6E_BASE_URL}/api/v1/workspaces/{wsId}`                     | `Authorization: Bearer <jwt>`                            | Workspace membership probe (returns 200/403/404)                                                                                                    |
 | `* ${D6E_BASE_URL}/api/v1/workspaces/{wsId}/invitations[/{id}]`    | `Authorization: Bearer <jwt>` (admin role required)      | GET list / DELETE single. See [Workspace invitation admin endpoints](#workspace-invitation-admin-endpoints).                                        |
 | `POST ${D6E_BASE_URL}/api/workflows/execute-by-intent`             | `Authorization: Bearer <jwt>`                            | Body contains `workspaceId` — set server-side                                                                                                       |
@@ -104,6 +138,7 @@ cookies and never reaches client-side JavaScript.
 | `POST ${D6E_BASE_URL}/api/v1/auth/token`                           | none (refresh token in body)                             | Stage 2 / refresh — see auth skill                                                                                                                  |
 | `* ${D6E_BASE_URL}/api/v1/drive-sync/{config,roots,sync,status,…}` | `Authorization: Bearer <jwt>`                            | `workspace_id` is supplied in the **body or query string**, never in the URL path. See [Drive Sync mirror endpoints](#drive-sync-mirror-endpoints). |
 | `POST ${D6E_BASE_URL}/api/v1/saas-proxy`                           | `Authorization: Bearer <jwt>`                            | Proxied SaaS API call using the workspace's stored credential. See [SaaS API calls](#saas-api-calls-through-the-d6e-proxy).                          |
+| `POST ${D6E_BASE_URL}/api/v1/saas-proxy-download`                  | `Authorization: Bearer <jwt>`                            | Binary sibling of saas-proxy; streams into `storage_file` (100 MB cap).                                                                             |
 | `* ${D6E_BASE_URL}/api/chat-sessions[/...]`                        | `Cookie: auth-token=<jwt>`                               | Bearer is rejected; the SvelteKit handler reads `locals.user`                                                                                       |
 | `POST ${D6E_BASE_URL}/api/workspace-prompt-rules`                  | `Cookie: auth-token=<jwt>`                               | Requires admin role on the workspace. `GET` (list) is also admin-only                                                                               |
 | `GET ${D6E_BASE_URL}/api/workspace-prompt-rules?workspaceId=…`     | `Cookie: auth-token=<jwt>`                               | Used for idempotent rule registration                                                                                                               |
@@ -718,6 +753,263 @@ Response: `{ status, headers, body }` mirroring the upstream reply
   `body` builds a multipart/related request (JSON metadata + binary),
   which is what Google Drive uploads want.
 
+### Workspace data, workflows, and admin APIs
+
+> The endpoints below live on the d6e Rust API (`${D6E_BASE_URL}/api/v1/...`).
+> Every custom-frontend proxy must pin `D6E_WORKSPACE_ID` server-side — the
+> browser never chooses the workspace. Canonical wrappers in the official
+> console live in
+> [`packages/frontend/src/lib/server/d6e-cloud.ts`](https://gitlab.com/cauchye/d6e-ai/d6e/-/blob/main/packages/frontend/src/lib/server/d6e-cloud.ts);
+> mirror that shape in `src/lib/server/d6e-client.ts`.
+
+#### Auth header rule of thumb
+
+| Route shape | Where workspace is resolved | `X-Workspace-ID` |
+| ----------- | --------------------------- | ---------------- |
+| `/api/v1/workspaces/{id}/sql`, `/members`, `/invitations`, `/embeddings`, `/setup/*` | Path `{id}` + membership check | Optional; must match if sent |
+| `/api/v1/workspaces/{id}/files/...`, `/documents/...` | **Header** (`auth.workspace_id()`; path id is ignored by the handler) | **Required** |
+| Top-level `/workflows`, `/stfs`, `/effects`, `/policies`, `/policy-groups`, `/pinned-charts`, `/api-keys`, `/audit-logs` | Header only | **Required** |
+| `/api/v1/saas-proxy`, `/api/v1/saas-proxy-download`, `/api/v1/drive-sync/*` | Body or query `workspace_id` (pin server-side) | Not used |
+
+Bearer JWT and API keys (`d6e_...`) share the same `Authorization: Bearer`
+transport everywhere the table says Bearer.
+
+---
+
+#### Workspace SQL
+
+Execute and preview raw SQL against the workspace's `user_data` schema.
+Logical table names in your SQL are rewritten to
+`user_data.ws_{uuid_with_underscores}_{name}` (max **23** chars for the
+logical name — the 40-char prefix consumes most of PostgreSQL's 63-char
+identifier limit). `CREATE TABLE` adds system columns including
+`deleted_at`; `DELETE` becomes a soft delete when that column exists.
+Row-level policies are evaluated on execute (not on preview).
+
+| Method | Path | Auth | Request | Response | Notes |
+| ------ | ---- | ---- | ------- | -------- | ----- |
+| `POST` | `/api/v1/workspaces/{wsId}/sql` | Bearer | `{ "sql": "<statement>" }` | `{ rows? }` for SELECT; `{ affected_rows?, executed_sql? }` for DML/DDL | Single statement only. DDL requires admin or `ddl_policy_group` membership. |
+| `POST` | `/api/v1/workspaces/{wsId}/sql/preview` | Bearer | `{ "sql": "<statement>" }` | `{ proposal_id, original_sql, transformed_sql, operation, affected_tables, requires_approval }` | `requires_approval` is `false` only for SELECT. Does **not** evaluate runtime policy conditions. |
+
+```ts
+interface ExecuteSqlRequest {
+  sql: string;
+}
+
+interface ExecuteSqlResponse {
+  rows?: Record<string, unknown>[];
+  affected_rows?: number;
+  executed_sql?: string;
+}
+
+interface PreviewSqlResponse {
+  proposal_id: string;
+  original_sql: string;
+  transformed_sql: string;
+  operation: string;
+  affected_tables: string[];
+  requires_approval: boolean;
+}
+
+interface SqlErrorResponse {
+  error: string;
+  code: string; // POLICY_DENIED | DDL_FORBIDDEN | PARSE_ERROR | INVALID_TABLE | EXECUTION_ERROR | ...
+}
+```
+
+```bash
+# Preview an UPDATE before showing an approval dialog
+curl -sS -X POST "${D6E_BASE_URL}/api/v1/workspaces/${WS_ID}/sql/preview" \
+  -H "Authorization: Bearer ${JWT}" \
+  -H "Content-Type: application/json" \
+  -d '{"sql":"UPDATE invoices SET status = '\''paid'\'' WHERE id = '\''…'\''"}'
+```
+
+Proxy tip: surface `{ error, code }` verbatim for `POLICY_DENIED` and
+`DDL_FORBIDDEN` so the UI can distinguish "forbidden by policy" from
+"bad SQL syntax" (`PARSE_ERROR` / `INVALID_TABLE`).
+
+---
+
+#### File storage (list, metadata, download)
+
+Complements upload/delete already documented above. All file routes resolve
+workspace from `X-Workspace-ID` even though the path includes `{wsId}` —
+always set both.
+
+| Method | Path | Auth | Request | Response | Notes |
+| ------ | ---- | ---- | ------- | -------- | ----- |
+| `GET` | `/api/v1/workspaces/{wsId}/files` | Bearer + `X-Workspace-ID` | — | `FileMetadata[]` | Lightweight list; excludes byte content. |
+| `GET` | `/api/v1/workspaces/{wsId}/files/{fileId}` | Bearer + `X-Workspace-ID` | — | `FileMetadata` | 404 when soft-deleted or wrong workspace. |
+| `GET` | `/api/v1/workspaces/{wsId}/files/{fileId}/download` | Bearer + `X-Workspace-ID` | — | binary body | Stream to the browser from your proxy; don't expose the upstream URL. Max 1 GB. |
+
+```ts
+interface FileMetadata {
+  id: string;
+  workspace_id: string;
+  filename: string;
+  content_type: string;
+  size: number;
+  metadata?: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+}
+```
+
+Size your proxy timeout for large downloads. Enforce a client-side cap in
+the app (this repo uses 10 MB on upload) even though upstream allows 1 GB.
+
+---
+
+#### Named workflows
+
+Header-scoped CRUD plus direct execution. Used by patterns like
+**expense-check**: `GET /api/v1/workflows` → find by `name` →
+`POST /api/v1/workflows/{id}/execute` with the workflow's input JSON.
+
+| Method | Path | Auth | Request | Response | Notes |
+| ------ | ---- | ---- | ------- | -------- | ----- |
+| `GET` | `/api/v1/workflows` | Bearer + `X-Workspace-ID` | — | `Workflow[]` | Sorted by `created_at` desc. |
+| `POST` | `/api/v1/workflows` | Bearer + `X-Workspace-ID` | `{ name, description?, input_schema?, input_steps?, stf_steps, effect_steps }` | `Workflow` (201) | Editor permission enforced. |
+| `GET` | `/api/v1/workflows/{id}` | Bearer + `X-Workspace-ID` | — | `WorkflowResponse` | Enriched STF/effect step metadata. |
+| `PATCH` | `/api/v1/workflows/{id}` | Bearer + `X-Workspace-ID` | partial update body | `WorkflowResponse` | |
+| `DELETE` | `/api/v1/workflows/{id}` | Bearer + `X-Workspace-ID` | — | 204 | Soft delete. |
+| `POST` | `/api/v1/workflows/{id}/execute` | Bearer + `X-Workspace-ID` | workflow input JSON (any shape) | last step output JSON | Missing header → 400. Returns the final step's JSON value. |
+
+```ts
+// Expense-check pattern (server-side)
+const workflows = await listWorkflows(caller, accessToken);
+const wf = workflows.find((w) => w.name === 'expense-check');
+const result = await executeWorkflow(caller, accessToken, wf.id, {
+  receipt_file_id: uploaded.id,
+  amount: 1200
+});
+```
+
+Pin `X-Workspace-ID` from `getD6eWorkspaceId(caller)` in every workflow
+helper — the URL never carries the workspace id. Docker STF steps can be
+slow on first image pull; use a generous timeout (expense-check uses 120s)
+and accept `event.request.signal`.
+
+---
+
+#### Workspace members
+
+Member CRUD under the workspace path. Mutations require **admin** role.
+`POST` shares the discriminated response with invitations (see
+[Workspace invitation admin endpoints](#workspace-invitation-admin-endpoints)).
+
+| Method | Path | Auth | Request | Response | Notes |
+| ------ | ---- | ---- | ------- | -------- | ----- |
+| `GET` | `/api/v1/workspaces/{wsId}/members` | Bearer (member) | — | `MemberInfo[]` | Joins user email/name server-side. |
+| `POST` | `/api/v1/workspaces/{wsId}/members` | Bearer (admin) | `{ email, role? }` | `{ membership? \| invitation? }` | `role` defaults to `member`. Email lowercased server-side. |
+| `PATCH` | `/api/v1/workspaces/{wsId}/members/{memberId}` | Bearer (admin) | `{ role }` | `MemberInfo` | Demoting the last admin → `LAST_ADMIN`. |
+| `DELETE` | `/api/v1/workspaces/{wsId}/members/{memberId}` | Bearer (admin) | — | 204 | Removing the last admin → `LAST_ADMIN`. |
+
+```ts
+interface MemberInfo {
+  id: string;
+  user_id: string;
+  user_email: string;
+  user_name: string;
+  role: 'admin' | 'member';
+  created_at: string;
+}
+```
+
+---
+
+#### Workspace documents
+
+Markdown documents with automatic version history on content change.
+List responses omit `content` for efficiency. Like files, handlers resolve
+workspace from `X-Workspace-ID` (path `{wsId}` is ignored) — always set both.
+
+| Method | Path | Auth | Request | Response | Notes |
+| ------ | ---- | ---- | ------- | -------- | ----- |
+| `GET` | `/api/v1/workspaces/{wsId}/documents` | Bearer + `X-Workspace-ID` | query `doc_type?`, `status?` | `DocumentListItem[]` | No `content` field. |
+| `POST` | `/api/v1/workspaces/{wsId}/documents` | Bearer + `X-Workspace-ID` | `{ title, doc_type?, status?, content?, metadata? }` | `DocumentResponse` | |
+| `GET` | `/api/v1/workspaces/{wsId}/documents/{id}` | Bearer + `X-Workspace-ID` | — | `DocumentResponse` | Includes full Markdown `content`. |
+| `PATCH` | `/api/v1/workspaces/{wsId}/documents/{id}` | Bearer + `X-Workspace-ID` | partial fields + `change_summary?` | `DocumentResponse` | Content change creates a new version row. |
+| `DELETE` | `/api/v1/workspaces/{wsId}/documents/{id}` | Bearer + `X-Workspace-ID` | — | 204 | Soft delete. |
+| `GET` | `/api/v1/workspaces/{wsId}/documents/{id}/versions` | Bearer + `X-Workspace-ID` | — | `DocumentVersionResponse[]` | Historical snapshots. |
+
+---
+
+#### Embeddings
+
+All routes nest under `/api/v1/workspaces/{wsId}/embeddings`. Workspace
+from path; Bearer + membership.
+
+**Column embeddings** (sync, pgvector on a TEXT/VARCHAR column):
+
+| Method | Path | Auth | Request | Response | Notes |
+| ------ | ---- | ---- | ------- | -------- | ----- |
+| `POST` | `…/embeddings/generate` | Bearer | `{ table_name, column_name, regenerate? }` | `{ generated_count, column_added }` | DDL permission required when adding `{column}_embedding`. |
+| `GET` | `…/embeddings/status?table_name=` | Bearer | query | `EmbeddingStatusResponse` | Per-column progress + model metadata. |
+| `POST` | `…/embeddings/similarity-search` | Bearer | `{ table_name, column_name, query, limit? }` | `{ rows: Value[] }` | Semantic nearest-neighbor over embedded rows. |
+
+**File embeddings** (`…/embeddings/files/*`, multimodal):
+
+| Method | Path | Request | Response |
+| ------ | ---- | ------- | -------- |
+| `POST` | `…/files/embed` | `{ file_ids: UUID[] }` | `{ results: [{ file_id, status, error? }] }` |
+| `GET` | `…/files/status` | — | `FileEmbeddingStatusResponse` |
+| `POST` | `…/files/search` | `{ query, limit? }` | `{ files[], chunks[] }` |
+| `POST` | `…/files/regenerate` | `{ file_ids: UUID[] }` | same shape as embed |
+
+**Table row embeddings** (`…/embeddings/tables/*`, async whole-table):
+
+| Method | Path | Request | Response |
+| ------ | ---- | ------- | -------- |
+| `POST` | `…/tables/embed` | `{ table_names: string[] }` | `{ results: [{ table_name, status, error? }] }` |
+| `GET` | `…/tables/status` | — | `TableRowEmbeddingStatusResponse` |
+| `POST` | `…/tables/search` | `{ query, limit?, table_names? }` | `{ results: [{ table_name, row_data, distance }] }` |
+| `POST` | `…/tables/regenerate` | `{ table_names: string[] }` | same shape as embed |
+
+Long-running embed/regenerate jobs return immediately; poll the matching
+`/status` endpoint from your UI.
+
+---
+
+#### Pinned dashboard charts
+
+Header-scoped CRUD storing a saved SQL query + chart configuration.
+List returns **visible** charts only (`is_visible = true`).
+
+| Method | Path | Auth | Request | Response | Notes |
+| ------ | ---- | ---- | ------- | -------- | ----- |
+| `GET` | `/api/v1/pinned-charts` | Bearer + `X-Workspace-ID` | — | `PinnedChart[]` | Ordered by `display_order`, then `created_at`. |
+| `POST` | `/api/v1/pinned-charts` | Bearer + `X-Workspace-ID` | `{ title, sql_query, chart_type, description?, x_axis_column?, y_axis_columns?, display_order? }` | `PinnedChart` (201) | |
+| `GET` | `/api/v1/pinned-charts/{id}` | Bearer + `X-Workspace-ID` | — | `PinnedChart` | |
+| `PATCH` | `/api/v1/pinned-charts/{id}` | Bearer + `X-Workspace-ID` | partial fields incl. `is_visible?` | `PinnedChart` | Hide charts by setting `is_visible: false`. |
+| `DELETE` | `/api/v1/pinned-charts/{id}` | Bearer + `X-Workspace-ID` | — | 204 | Soft delete. |
+
+Chart SQL runs through the same workspace SQL engine when the dashboard
+renders — keep logical table names ≤ 23 chars.
+
+---
+
+#### Other Rust APIs (inventory)
+
+Brief index of additional endpoints you may proxy. All Bearer unless noted.
+Pin workspace id per the auth rule of thumb above.
+
+| Area | Base path | Highlights |
+| ---- | --------- | ---------- |
+| STFs | `/api/v1/stfs` | CRUD, `/{id}/versions`, `/{id}/describe`, `POST /instant-run`. Secrets at `/{stf_id}/secrets`. Requires `X-Workspace-ID`. |
+| Effects | `/api/v1/effects` | CRUD + `/{id}/versions`. Requires `X-Workspace-ID`. |
+| Policies | `/api/v1/policies` | CRUD for row-level policy rules. Requires `X-Workspace-ID`. |
+| Policy groups | `/api/v1/policy-groups` | CRUD; used for DDL/editor group membership. Requires `X-Workspace-ID`. |
+| API keys | `/api/v1/api-keys` | `GET` list, `POST` create (returns raw key once), `DELETE /{id}`. Session JWT only (not API keys). Requires `X-Workspace-ID`. |
+| Audit logs | `/api/v1/audit-logs` | `GET` with filters (`user_id?`, `action?`, `limit?`, …). Requires `X-Workspace-ID`. |
+| Redirect URIs | `/api/v1/workspaces/{id}/redirect-uris` | Admin Bearer CRUD for OAuth callback URLs (proxied to d6e-auth). |
+| Workspace setup | `/api/v1/workspaces/{id}/setup/*` | Admin Bearer routes: `skills`, `title-rule`, `chat-templates`, `dashboard-enabled`, `saas-credentials`, **`prompt-rules`** (Bearer alternative to the Cookie SvelteKit `/api/workspace-prompt-rules` route). |
+| SaaS binary download | `POST /api/v1/saas-proxy-download` | Same auth/credential model as `saas-proxy`; streams upstream binary into `storage_file` (100 MB cap). Body mirrors saas-proxy + optional `suggested_filename` / `metadata`. Response includes `{ id, filename, content_type, size }` on 2xx. |
+| Current user | `GET /api/v1/auth/me` | `{ id, email, name }` from JWT or API key. No workspace header needed. |
+
+There is **no** `GET /workspaces/{id}/tables` endpoint (older README mentions are stale). List tables via SQL against `information_schema` as `d6e-cloud.ts` `listTables()` does. File upload also accepts `POST …/files` with base64 JSON as an alternative to multipart.
+
 ### Workspace invitation admin endpoints
 
 > Available on d6e instances that have the pending-invitation feature
@@ -763,7 +1055,17 @@ admin can render a distinct toast for each.
 - [ ] `accessToken` is passed explicitly; no helper reaches into `event.cookies` or globals.
 - [ ] All outbound fetches set `AbortSignal.timeout(...)`, and long-running endpoints (execute-by-intent) additionally accept an external `signal`.
 - [ ] Errors normalize to `D6eClientError(message, status, upstreamBody, {timedOut, aborted})`.
-- [ ] Bearer endpoints under `/api/v1/...` send both `Authorization: Bearer <jwt>` and `X-Workspace-ID: <wsId>` when the path includes a workspace.
+- [ ] Bearer endpoints under `/api/v1/...` send `Authorization: Bearer <jwt>`. Add `X-Workspace-ID` when the route is **header-scoped** (files, documents, workflows, stfs, effects, policies, pinned-charts, api-keys, audit-logs) — path-scoped SQL/members/embeddings/setup resolve workspace from the URL.
+- [ ] SQL proxy helpers take `{ sql }` only from validated server input; inject `wsId` from `getD6eWorkspaceId(caller)` into the path, never from the browser.
+- [ ] SQL error responses forward `{ error, code }` so the UI can branch on `POLICY_DENIED` vs parse errors.
+- [ ] File list/metadata/download helpers send `X-Workspace-ID` even though the URL already contains `{wsId}`.
+- [ ] Workflow helpers always set `X-Workspace-ID`; create-job and execute-by-intent paths pin workspace differently (header vs body) — do not mix them up.
+- [ ] Member admin proxies forward 403 unchanged and surface both `{ membership }` and `{ invitation }` from `POST …/members`.
+- [ ] Member remove/demote handlers forward `LAST_ADMIN` error bodies so the UI can explain "cannot remove the last admin".
+- [ ] Document list proxies do not expect a `content` field; fetch `GET …/documents/{id}` when the editor needs the body.
+- [ ] Embedding long-running routes poll `/status` rather than blocking the HTTP response.
+- [ ] Pinned-chart proxies treat list as visibility-filtered; use `PATCH is_visible: false` to hide without deleting.
+- [ ] Binary download proxies (`files/{id}/download`, `saas-proxy-download`) stream through the server — never redirect the browser to `${D6E_BASE_URL}`.
 - [ ] SvelteKit endpoints (`/api/chat-sessions`, `/api/workspace-prompt-rules`) use `Cookie: auth-token=<jwt>` and never `Authorization`.
 - [ ] The SvelteKit route handler pins `workspaceId` from env, not from the request body.
 - [ ] For Drive Sync endpoints, the proxy overrides `workspace_id` in **both** the JSON body and any query string before forwarding (the d6e route accepts it in either spot, and the browser must never choose it).
@@ -800,6 +1102,34 @@ admin can render a distinct toast for each.
 - Avoid `try/catch` swallowing inside the helpers — surface every failure as `D6eClientError`. Logging happens at the boundary (route handler / SSR loader) where the context is known.
 
 ## Troubleshooting
+
+### SQL execute returns 403 with `code: "POLICY_DENIED"`
+
+The statement parsed successfully but a workspace row-level policy blocked
+it for this user. This is not an auth failure — the JWT is valid and the
+user is a member. Surface the `error` string to the user and, for admin
+UIs, link to the d6e console's policy editor. Preview (`/sql/preview`)
+will **not** catch this because it skips runtime policy evaluation; only
+execute does. Do not retry blindly — adjust the SQL, the policy, or the
+caller's role/group membership.
+
+### `POST /api/v1/workflows/{id}/execute` returns 400 "Missing X-Workspace-ID header"
+
+Workflow routes are mounted at the top level (`/api/v1/workflows/...`), not
+under `/workspaces/{id}`. The handler reads workspace exclusively from
+`X-Workspace-ID`. Your proxy must set
+`'X-Workspace-ID': getD6eWorkspaceId(caller)` on every workflow helper
+even though you also pin `D6E_WORKSPACE_ID` in execute-by-intent bodies.
+A Bearer token alone is not enough.
+
+### SQL preview/execute returns 400 with `code: "INVALID_TABLE"` mentioning 23 characters
+
+Logical table names are capped at **23 characters** because d6e prefixes
+them with `ws_{uuid_with_underscores}_` (40 chars) inside the
+`user_data` schema (PostgreSQL's 63-char identifier limit). Shorten the
+name in your SQL — e.g. `expense_line_items` → `exp_line_items`. The
+`transformed_sql` field in preview shows the fully prefixed name d6e will
+run.
 
 ### `/api/chat-sessions` returns 401 even though `/api/intent` works
 
