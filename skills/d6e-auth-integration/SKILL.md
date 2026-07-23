@@ -1,6 +1,6 @@
 ---
 name: d6e-auth-integration
-description: Implements end-user OAuth2 authentication against a d6e workspace using the instance-brokered token exchange (the d6e instance relays the authorization code to d6e-auth, so the frontend holds no client secret), plus a standalone-client alternative, HTTP-only session cookies, transparent refresh, and the workspace allow-list. Use when wiring `/auth/login` and `/auth/callback` routes, when seeing 401 from `${D6E_BASE_URL}` Bearer endpoints after a successful login, or when adding workspace-scoped sessions to a new d6e-connected frontend.
+description: Implements end-user OAuth2 authentication against a d6e workspace using the instance-brokered token exchange (the d6e instance relays the authorization code to d6e-auth, so the frontend holds no client secret), plus a standalone-client alternative, HTTP-only session cookies, transparent refresh, and the workspace allow-list. Covers instance JWT vs workspace-scoped JWT (`d6e_workspace_id`) vs API keys (`d6e_`), SvelteKit hooks (with Next.js / Cloudflare adapter notes), and audience validation (`aud` === D6E_AUTH_CLIENT_ID). Use when wiring `/auth/login` and `/auth/callback` routes, when seeing 401 from `${D6E_BASE_URL}` Bearer endpoints after a successful login, or when adding workspace-scoped sessions to a new d6e-connected frontend.
 ---
 
 # d6e Auth Integration
@@ -82,7 +82,8 @@ Workspace Settings → Integration → **Redirect URIs**). The instance's
 token relay forwards `redirect_uri` unchanged. Loopback URIs
 (localhost / 127.0.0.0/8 / [::1], any port) need no registration and
 issue unscoped tokens. Workspace-registered URIs issue tokens with a
-`d6e_workspace_id` claim scoped to that workspace only.
+`d6e_workspace_id` claim scoped to that workspace only (see
+[token-kinds.md](references/token-kinds.md)).
 
 ### Alternative: standalone client (when you don't operate the instance)
 
@@ -533,13 +534,10 @@ domain list (or the user must use an allowed account).
 
 ### Login succeeds but every API call returns 401
 
-The stored access token has the wrong audience. Confirm
-`exchangeAuthorizationCode()` targets `${D6E_BASE_URL}/api/v1/auth/token`
-(the instance), not d6e-auth directly, and that the cookie value posted
-as `Bearer` decodes (via `decodeJwtPayload()`) to a JWT whose `aud`
-matches the instance's client id — not a `d6e-auth`-audience token. If
-you use the standalone-client alternative, make sure the refresh
-re-mint step at the instance still runs.
+Wrong token kind or audience — see [token-kinds.md](references/token-kinds.md).
+Confirm `exchangeAuthorizationCode()` targets the instance token endpoint and
+that `aud` matches `D6E_AUTH_CLIENT_ID`. Standalone-client flows must still
+re-mint at the instance.
 
 ### "OAuth state mismatch" on `/auth/callback`
 
@@ -592,6 +590,13 @@ NULL`). Soft-deleted workspaces are filtered out of the auto-promote
 when the user cookie is missing, but it doesn't overwrite a present
 cookie. Have users log out and back in after a profile rename, or call
 `storeSession()` again after rotating the user's display name.
+
+## References
+
+| Document | Contents |
+| -------- | -------- |
+| [references/token-kinds.md](references/token-kinds.md) | Instance JWT vs workspace-scoped JWT (`d6e_workspace_id`) vs API key `d6e_`; `reject_scoped_token` on `/api/v1/api-keys`; `jwtVerify` requires `aud` === `D6E_AUTH_CLIENT_ID` |
+| [references/platform-adapters.md](references/platform-adapters.md) | SvelteKit hooks pattern (this repo) vs Next.js App Router and Cloudflare Workers (cookies, OAuth callback on edge, async jobs — link to [platform-timeouts.md](../d6e-workspace-api-client/references/platform-timeouts.md)) |
 
 ## Related Skills
 

@@ -1,6 +1,6 @@
 ---
 name: d6e-prompt-driven-ui
-description: Designs prompt-driven UI for d6e-connected frontends — workspace prompt rules that emit `kind`-discriminated JSON inside fenced code blocks, Zod-based parsers with markdown fallback, revision flows driven by XML tags, the interactive "scenario append" pattern for adding new behaviour without touching the base prompt, and the Drive Sync mirror pattern that lets a scenario search the `drive_files` SQL projection (and lazily `materialize` Drive bytes through `d6e_read_drive_file`) before generating output. Use when authoring a new `scripts/prompts/*.md` file, when the LLM is drifting off-contract, when adding a new task type to an existing prompt, when the frontend should render structured JSON cards instead of raw assistant text, or when extending a prompt to look up reference data from the workspace's Google Drive mirror.
+description: Designs prompt-driven UI for d6e-connected frontends — workspace prompt rules that emit `kind`-discriminated JSON inside fenced code blocks, Zod-based parsers with markdown fallback, revision flows driven by XML tags, the interactive "scenario append" pattern, Drive Sync mirror lookups, async intent jobs with toolTrace polling for long runs, and rendering execute-by-intent `files[]` outputs (Excel etc.) via same-origin download proxies. Use when authoring a new `scripts/prompts/*.md` file, when the LLM is drifting off-contract, when adding a new task type to an existing prompt, when the frontend should render structured JSON cards instead of raw assistant text, when sync execute-by-intent times out, or when extending a prompt to look up reference data from the workspace's Google Drive mirror.
 ---
 
 # d6e Prompt-Driven UI
@@ -21,6 +21,11 @@ three layers that make that work reliably:
 3. **Render layer** — Switch on `parsed.kind` to pick a typed
    component; fall back to a markdown render of the raw assistant
    text so the card never goes blank.
+
+Long agent runs and binary outputs sit beside this JSON contract — use
+async jobs + `toolTrace` polling ([async-jobs-ui.md](references/async-jobs-ui.md))
+and same-origin file download for `files[]` / storage ids
+([output-files.md](references/output-files.md)).
 
 The same workspace rule also defines **revision flows** (the user
 edits the previous output by sending a follow-up message wrapped in
@@ -715,6 +720,13 @@ Google Workspace etc., API token dialog for Chatwork / Zendesk). Then
 rerun the scenario. The prompt should treat an empty
 `d6e_list_saas_credentials` result as a hard stop with exactly this
 instruction.
+
+## References
+
+| Document | Contents |
+| -------- | -------- |
+| [references/async-jobs-ui.md](references/async-jobs-ui.md) | Async `execute-by-intent/jobs` for long runs; `toolTrace` polling; soft-deleted `inputFileRefs`; links to [async-intent-jobs.md](../d6e-workspace-api-client/references/async-intent-jobs.md) and [download-two-step.md](../d6e-workspace-api-client/references/download-two-step.md) when tools materialize files |
+| [references/output-files.md](references/output-files.md) | Rendering `IntentResponse.files[]` (inline base64 vs storage id) through same-origin `/api/files/{id}/download` proxies |
 
 ## Related Skills
 
