@@ -97,8 +97,11 @@ Consumed by `POST /api/chat-sessions/generate-title`.
 | Feature | Cookie BFF | Rust `/api/v1` | Notes |
 | ------- | ---------- | -------------- | ----- |
 | List | `GET /api/workspaces/{id}/redirect-uris` | `GET …/redirect-uris` | Admin; BFF proxies Rust |
-| Add | `POST …/redirect-uris` | `POST …/redirect-uris` | |
+| Add | `POST …/redirect-uris` | `POST …/redirect-uris` | Body `{ "redirect_uri": "https://…" }` |
 | Remove | `DELETE …/redirect-uris` | `DELETE …/redirect-uris` body `{ redirect_uri }` | |
+
+Full schema, HTTPS rules, and list response:
+[redirect-uris.md](./redirect-uris.md).
 
 ---
 
@@ -117,8 +120,8 @@ See [embeddings.md](./embeddings.md).
 
 | Feature | Cookie BFF | Rust `/api/v1` | Notes |
 | ------- | ---------- | -------------- | ----- |
-| Session CRUD | `GET/POST /api/chat-sessions`, `GET/PATCH/DELETE /api/chat-sessions/{id}` | **None** | Frontend DB only |
-| Generate title | `POST /api/chat-sessions/generate-title` | **None** | LLM; requires `workspaceId` |
+| Session CRUD | `GET/POST /api/chat-sessions`, `GET/PATCH/DELETE /api/chat-sessions/{id}` | **None** | Frontend DB only — [chat-sessions.md](./chat-sessions.md) |
+| Generate title | `POST /api/chat-sessions/generate-title` | **None** | LLM; requires `workspaceId` — [chat-sessions.md](./chat-sessions.md) |
 | Chat stream | `POST /api/chat` | **None** | [chat-streaming.md](./chat-streaming.md) |
 
 ---
@@ -127,7 +130,7 @@ See [embeddings.md](./embeddings.md).
 
 | Feature | Cookie BFF | Rust `/api/v1` | Notes |
 | ------- | ---------- | -------------- | ----- |
-| Get / set / reset | `GET/PUT/DELETE /api/workspaces/{id}/default-models` | **None** | Frontend DB; admin only |
+| Get / set / reset | `GET/PUT/DELETE /api/workspaces/{id}/default-models` | **None** | Frontend DB; **admin only**. `chat*` = chat UI seed; `sns*` = execute-by-intent. Details: [llm-and-embedding-keys.md § Changing models](./llm-and-embedding-keys.md#changing-models-via-api) |
 
 Chat UI reads defaults server-side — members do not call this route directly.
 
@@ -138,7 +141,7 @@ Chat UI reads defaults server-side — members do not call this route directly.
 | Feature | Cookie BFF | Rust `/api/v1` | Notes |
 | ------- | ---------- | -------------- | ----- |
 | Availability | `GET /api/transcribe` → `{ available }` | **None** | Requires `OPENAI_API_KEY` on instance |
-| Transcribe audio | `POST /api/transcribe` multipart audio | **None** | Max 25 MB |
+| Transcribe audio | `POST /api/transcribe` multipart `audio` | **None** | Max 25 MB — [transcribe.md](./transcribe.md) |
 
 ---
 
@@ -146,9 +149,11 @@ Chat UI reads defaults server-side — members do not call this route directly.
 
 | Feature | Cookie BFF | Rust `/api/v1` | Notes |
 | ------- | ---------- | -------------- | ----- |
-| Get order | `GET /api/table-column-order/{workspaceId}/{tableName}` | **None** | Per-user preference |
-| Save | `PUT …/table-column-order/…` | **None** | |
-| Reset | `DELETE …/table-column-order/…` | **None** | |
+| Get order | `GET /api/table-column-order/{workspaceId}/{tableName}` | **None** | Per-user; returns `string[]` (empty when unset) |
+| Save | `PUT …/table-column-order/{workspaceId}/{tableName}` | **None** | Body `{ "columnOrder": ["col_a", "col_b", …] }` |
+| Reset | `DELETE …/table-column-order/{workspaceId}/{tableName}` | **None** | `{ "success": true }` |
+
+Cookie auth (`locals.user`). `columnOrder` must be an array of strings.
 
 ---
 
@@ -156,7 +161,18 @@ Chat UI reads defaults server-side — members do not call this route directly.
 
 | Feature | Cookie BFF | Rust `/api/v1` | Notes |
 | ------- | ---------- | -------------- | ----- |
-| CRUD | `/api/workspace-prompt-rules[/{ruleId}]` | `…/setup/prompt-rules[/{ruleId}]` | Cookie admin vs Bearer |
+| CRUD | `/api/workspace-prompt-rules[/{ruleId}]` | `…/setup/prompt-rules[/{ruleId}]` | Cookie admin vs Bearer — [workspace-setup.md](./workspace-setup.md) |
+
+---
+
+## Workspace PATCH (partial)
+
+| Feature | Cookie BFF | Rust `/api/v1` | Notes |
+| ------- | ---------- | -------------- | ----- |
+| Update workspace | `PATCH /api/workspaces/{id}` | `PATCH /api/v1/workspaces/{id}` | Cookie: subset only — [workspaces.md](./workspaces.md) |
+
+Cookie body: `name`, `mcp_timeout_ms`, `custom_prompt`, `auto_embed_files`,
+`auto_embed_tables`. Rust PATCH also accepts policy group id fields.
 
 ---
 

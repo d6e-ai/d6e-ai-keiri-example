@@ -112,10 +112,11 @@ Optional query parameters on GET collection:
 | Symptom | Cause | Fix |
 | ------- | ----- | --- |
 | 400 empty body on list | Missing `X-Workspace-ID` | Set header from env |
-| 403 | Policy denies document editor | Check [policies.md](./policies.md) |
+| 403 | Not a workspace member, or scoped JWT `d6e_workspace_id` ≠ `X-Workspace-ID` | Verify membership; pin header from env — documents do **not** use storage/document editor policies |
 | List missing `content` | By design | GET single doc for full body |
 
 ## Related
 
 - [file-storage.md](./file-storage.md) — binary attachments
+- [billing-entitlement.md](./billing-entitlement.md) — 402 LLM soft gate (not document policy)
 - [api-catalog.md](./api-catalog.md) — master index

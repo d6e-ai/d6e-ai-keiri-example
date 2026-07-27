@@ -93,6 +93,23 @@ Content-Type: application/json
 
 Prefer multipart for browser uploads — base64 expands size ~33%.
 
+## Auto-embed on upload
+
+When the workspace has **`auto_embed_files`** enabled (Workspace Settings →
+Auto-Embedding), successful uploads queue background file embedding
+(`maybe_auto_embed_file` in
+[`storage_file.rs`](https://github.com/d6e-ai/d6e/blob/main/packages/api/src/routes/v1/storage_file.rs)).
+
+Requirements (all must be true):
+
+- Workspace flag `auto_embed_files = true`
+- Instance embedding config present
+- Multimodal embedding client available (`gemini-embedding-2*` class)
+
+Embedding is **fire-and-forget** — the upload response returns before vectors
+are ready. Poll `GET …/embeddings/files/status` or search after completion.
+See [embeddings.md](./embeddings.md).
+
 ## List and metadata
 
 `GET …/files` runs a lightweight query excluding the BYTEA column (up to

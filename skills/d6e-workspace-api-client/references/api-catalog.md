@@ -29,20 +29,20 @@ some README mentions). List tables via SQL against `information_schema` — see
 
 | Method | Path | Auth | Purpose | Detail |
 | ------ | ---- | ---- | ------- | ------ |
-| GET | `/api/v1/workspaces` | Bearer | List workspaces for caller | — |
-| POST | `/api/v1/workspaces` | Bearer (session) | Create workspace | — |
+| GET | `/api/v1/workspaces` | Bearer | List workspaces for caller | [workspaces.md](./workspaces.md) |
+| POST | `/api/v1/workspaces` | Bearer (session) | Create workspace | [workspaces.md](./workspaces.md) |
 | GET | `/api/v1/workspaces/{id}` | Bearer (path ws) | Get workspace; membership probe | [members-and-invitations.md](./members-and-invitations.md) |
-| PATCH | `/api/v1/workspaces/{id}` | Bearer (path ws) | Update name, mcp_timeout, custom_prompt, auto_embed_* | — |
-| DELETE | `/api/v1/workspaces/{id}` | Bearer (path ws) | Soft delete workspace | — |
+| PATCH | `/api/v1/workspaces/{id}` | Bearer (path ws, admin) | Update name, policy groups, mcp_timeout, custom_prompt, auto_embed_* | [workspaces.md](./workspaces.md) |
+| DELETE | `/api/v1/workspaces/{id}` | Bearer (path ws, admin) | Soft delete workspace | [workspaces.md](./workspaces.md) |
 | GET | `/api/v1/workspaces/{id}/members` | Bearer (path ws) | List members | [members-and-invitations.md](./members-and-invitations.md) |
 | POST | `/api/v1/workspaces/{id}/members` | Bearer (path ws, admin) | Add member or queue invitation | [members-and-invitations.md](./members-and-invitations.md) |
 | PATCH | `/api/v1/workspaces/{id}/members/{memberId}` | Bearer (path ws, admin) | Change role; `LAST_ADMIN` guard | [members-and-invitations.md](./members-and-invitations.md) |
 | DELETE | `/api/v1/workspaces/{id}/members/{memberId}` | Bearer (path ws, admin) | Remove member; `LAST_ADMIN` guard | [members-and-invitations.md](./members-and-invitations.md) |
 | GET | `/api/v1/workspaces/{id}/invitations` | Bearer (path ws, admin) | List pending invitations | [members-and-invitations.md](./members-and-invitations.md) |
 | DELETE | `/api/v1/workspaces/{id}/invitations/{invitationId}` | Bearer (path ws, admin) | Cancel pending invitation | [members-and-invitations.md](./members-and-invitations.md) |
-| GET | `/api/v1/workspaces/{id}/redirect-uris` | Bearer (path ws) | List OAuth redirect URIs | — |
-| POST | `/api/v1/workspaces/{id}/redirect-uris` | Bearer (path ws) | Add redirect URI | — |
-| DELETE | `/api/v1/workspaces/{id}/redirect-uris` | Bearer (path ws) | Remove redirect URI (body: `redirect_uri`) | — |
+| GET | `/api/v1/workspaces/{id}/redirect-uris` | Bearer (path ws, admin) | List OAuth redirect URIs | [redirect-uris.md](./redirect-uris.md) |
+| POST | `/api/v1/workspaces/{id}/redirect-uris` | Bearer (path ws, admin) | Add redirect URI | [redirect-uris.md](./redirect-uris.md) |
+| DELETE | `/api/v1/workspaces/{id}/redirect-uris` | Bearer (path ws, admin) | Remove redirect URI (body: `redirect_uri`) | [redirect-uris.md](./redirect-uris.md) |
 
 ---
 
@@ -90,6 +90,10 @@ Header-scoped like files — see [auth-header-matrix.md](./auth-header-matrix.md
 
 ## Embeddings (column / files / tables)
 
+**Keys:** Custom FE proxies use Bearer JWT only — **no** `GEMINI_API_KEY` /
+`OPENAI_API_KEY` in your app. Instance operator configures `EMBEDDING_MODEL` +
+Vercel AI Gateway. See [llm-and-embedding-keys.md](./llm-and-embedding-keys.md).
+
 | Method | Path | Auth | Purpose | Detail |
 | ------ | ---- | ---- | ------- | ------ |
 | POST | `/api/v1/workspaces/{id}/embeddings/generate` | Bearer (path ws) | Start column embedding job | [embeddings.md](./embeddings.md) |
@@ -104,7 +108,35 @@ Header-scoped like files — see [auth-header-matrix.md](./auth-header-matrix.md
 | POST | `/api/v1/workspaces/{id}/embeddings/tables/search` | Bearer (path ws) | Cross-table semantic search | [embeddings.md](./embeddings.md) |
 | POST | `/api/v1/workspaces/{id}/embeddings/tables/regenerate` | Bearer (path ws) | Regenerate table embeddings | [embeddings.md](./embeddings.md) |
 
-Long jobs — poll status endpoints; see [embeddings.md](./embeddings.md).
+Column `generate` is **synchronous** (`generated_count`); files and table row
+embeds are **async** — poll status. RAG recipes:
+[rag-recipes.md](./rag-recipes.md).
+
+---
+
+## GraphQL
+
+**Not available** for custom frontends. The Rust API builds a placeholder
+`async_graphql` schema (`QueryRoot.health` only) but does **not** mount a public
+GraphQL HTTP route — use SQL execute and the REST catalog above.
+
+---
+
+## Internal / operator-only configuration
+
+These are **not** custom frontend `.env` variables. Instance operators configure
+them on the d6e deployment:
+
+| Variable / surface | Purpose |
+| ------------------ | ------- |
+| `AI_GATEWAY_API_KEY` or d6e-auth client credentials | Cloud LLM + embeddings via Vercel AI Gateway |
+| `EMBEDDING_MODEL`, `EMBEDDING_DIMENSIONS`, `D6E_AUTH_CLIENT_ID` | Rust embedding API ([llm-and-embedding-keys.md](./llm-and-embedding-keys.md)) |
+| `OPENAI_API_KEY` | Instance `POST /api/transcribe` (Whisper) only |
+| `TAVILY_API_KEY` | Tavily tools in chat / execute-by-intent |
+| `OLLAMA_BASE_URL`, `LMSTUDIO_BASE_URL` | Local LLM providers on instance |
+
+End users connect SaaS via OAuth/PAT ([saas-oauth-bff.md](./saas-oauth-bff.md));
+credentials land in `frontend.saas_credential` for Bearer `saas-proxy` calls.
 
 ---
 
@@ -377,10 +409,10 @@ inventory.
 | Method | Path | Auth | Purpose | Detail |
 | ------ | ---- | ---- | ------- | ------ |
 | POST | `/api/chat` | Cookie | UIMessage LLM stream + MCP | [chat-streaming.md](./chat-streaming.md) |
-| GET | `/api/chat-sessions?workspaceId=` | Cookie | List chat sessions | [auth-header-matrix.md](./auth-header-matrix.md) |
-| POST | `/api/chat-sessions` | Cookie | Create session | — |
-| GET/PATCH/DELETE | `/api/chat-sessions/{id}` | Cookie | Session CRUD | — |
-| POST | `/api/chat-sessions/generate-title` | Cookie | AI title generation | [console-bff-catalog.md](./console-bff-catalog.md) |
+| GET | `/api/chat-sessions?workspaceId=` | Cookie | List chat sessions | [chat-sessions.md](./chat-sessions.md) |
+| POST | `/api/chat-sessions` | Cookie | Create session | [chat-sessions.md](./chat-sessions.md) |
+| GET/PATCH/DELETE | `/api/chat-sessions/{id}` | Cookie | Session CRUD | [chat-sessions.md](./chat-sessions.md) |
+| POST | `/api/chat-sessions/generate-title` | Cookie | AI title generation | [chat-sessions.md](./chat-sessions.md) |
 | GET | `/api/workspace-prompt-rules?workspaceId=` | Cookie (admin) | List prompt rules | [workspace-setup.md](./workspace-setup.md) |
 | POST | `/api/workspace-prompt-rules` | Cookie (admin) | Create prompt rule | [workspace-setup.md](./workspace-setup.md) |
 | PATCH/DELETE | `/api/workspace-prompt-rules/{ruleId}` | Cookie (admin) | Update / delete rule | [workspace-setup.md](./workspace-setup.md) |
@@ -419,6 +451,10 @@ Platform timeout guidance: [platform-timeouts.md](./platform-timeouts.md).
 | [workspace-skills-bff.md](./workspace-skills-bff.md) | Skills discover/upload/install BFF + public skill fetch |
 | [memories-mcp-settings.md](./memories-mcp-settings.md) | MCP servers, memories, workspace-settings, verify |
 | [console-bff-catalog.md](./console-bff-catalog.md) | **Master BFF table** — Cookie vs Rust dual routes |
+| [workspaces.md](./workspaces.md) | Workspace CRUD + Cookie PATCH subset |
+| [redirect-uris.md](./redirect-uris.md) | OAuth redirect URI admin |
+| [chat-sessions.md](./chat-sessions.md) | Chat session persistence + generate-title |
+| [transcribe.md](./transcribe.md) | Whisper transcribe BFF |
 | [download-two-step.md](./download-two-step.md) | Storage download streaming proxy |
 | [saas-proxy-download.md](./saas-proxy-download.md) | External file → storage metadata |
 | [file-storage.md](./file-storage.md) | Upload/list/delete |

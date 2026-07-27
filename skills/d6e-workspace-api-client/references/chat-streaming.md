@@ -2,7 +2,10 @@
 
 Interactive LLM chat with MCP tool execution, SQL human-in-the-loop (HITL)
 approval, `ask_user` prompts, memory injection, and context compaction.
-Returns a **UIMessage stream** (Vercel AI SDK protocol), not plain SSE text.
+Returns a **UIMessage stream** (Vercel AI SDK protocol via `streamText`), not
+plain SSE text. Provider keys stay on the instance gateway — see
+[llm-and-embedding-keys.md](./llm-and-embedding-keys.md). execute-by-intent uses
+the same SDK with `generateText` (JSON, not this stream).
 
 This is the d6e console's primary agent surface. Custom frontends that need
 full MCP tool access (beyond what REST exposes) must proxy this route or use
@@ -33,6 +36,17 @@ Content-Type: application/json
 - Custom frontend: proxy same-origin with user's session cookie forwarded to
   `${D6E_BASE_URL}/api/chat`.
 
+### Provider API keys — not from the client
+
+The browser and custom frontend **never** supply `OPENAI_API_KEY`,
+`ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, or `GOOGLE_API_KEY`. Cloud models route
+through the instance Vercel AI Gateway virtual key (`getInstanceGatewayKey()` in
+[`ai-providers.ts`](https://github.com/d6e-ai/d6e/blob/main/packages/frontend/src/lib/server/ai-providers.ts)).
+Your proxy forwards the session cookie only.
+
+Full env matrix by role:
+[llm-and-embedding-keys.md](./llm-and-embedding-keys.md).
+
 ---
 
 ## Request body
@@ -54,12 +68,16 @@ Content-Type: application/json
 | Field | Required | Notes |
 | ----- | -------- | ----- |
 | `messages` | Yes | Non-empty UIMessage array |
-| `provider` | Yes | LLM provider id (`openai`, `anthropic`, `google`, …) |
-| `model` | No | Defaults via `getDefaultModel(provider)` |
-| `baseUrl` | No | Custom endpoint for Ollama/LM Studio |
+| `provider` | Yes | LLM provider id (`openai`, `anthropic`, `google`, …) — **selection only**; gateway key stays on instance |
+| `model` | No | Defaults via `getDefaultModel(provider)`; entitlement allow-list checked |
+| `baseUrl` | No | Custom endpoint for Ollama/LM Studio on the **instance** only |
 | `workspaceId` | **Yes** | Entitlement gate + MCP scope; 400 if missing |
 | `chatSessionId` | No | Used for compaction logging |
 | `attachments` | No | Storage file refs injected into model messages |
+
+Contrast with execute-by-intent: chat accepts `provider` / `model` in the body;
+execute-by-intent resolves from workspace `snsProvider` / `snsModel` with **no**
+provider fields in the request — [async-intent-jobs.md](./async-intent-jobs.md).
 
 ---
 
@@ -239,6 +257,7 @@ doc for full chat/MCP scenarios.
 
 ## Related
 
+- [llm-and-embedding-keys.md](./llm-and-embedding-keys.md) — no client provider keys
 - [mcp-rest-map.md](./mcp-rest-map.md) — MCP ↔ REST mapping
 - [memories-mcp-settings.md](./memories-mcp-settings.md) — settings that control chat behavior
 - [async-intent-jobs.md](./async-intent-jobs.md) — NL automation without chat UI

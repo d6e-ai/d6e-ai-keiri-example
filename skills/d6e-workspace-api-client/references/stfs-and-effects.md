@@ -148,6 +148,64 @@ Same auth headers as STFs.
 Effects define HTTP calls (method, URL template, headers, body mapping) executed
 during workflow runs. Workflow steps reference `effect_version_id`.
 
+### Create payload
+
+```ts
+{
+  name: string;                    // 1–255 chars
+  description?: string;            // max 1000 chars
+  is_public?: boolean;
+  version: string;                 // semver, e.g. "1.0.0"
+  url: string;                     // absolute URL
+  method: string;                  // GET | POST | PUT | PATCH | DELETE | HEAD | OPTIONS
+  input_schema?: object;           // JSON Schema object
+  header_mappings: FieldMapping[]; // required (may be [])
+  body_mappings: FieldMapping[];   // required (may be [])
+  query_mappings?: FieldMapping[]; // default []
+}
+```
+
+`FieldMapping` shape (effect mappings use simple field paths — no `$input` prefix):
+
+```json
+{
+  "source": { "type": "Variable", "value": "customer_id" },
+  "target": "id"
+}
+```
+
+Static values:
+
+```json
+{
+  "source": { "type": "Const", "value": "application/json" },
+  "target": "Content-Type"
+}
+```
+
+Example create:
+
+```json
+POST /api/v1/effects
+X-Workspace-ID: <wsId>
+Authorization: Bearer <jwt>
+
+{
+  "name": "notify-slack",
+  "version": "1.0.0",
+  "url": "https://hooks.slack.com/services/…",
+  "method": "POST",
+  "header_mappings": [],
+  "body_mappings": [
+    {
+      "source": { "type": "Variable", "value": "message" },
+      "target": "text"
+    }
+  ],
+  "query_mappings": []
+}
+```
+
 ---
 
 ## Effect versions
@@ -156,6 +214,48 @@ during workflow runs. Workflow steps reference `effect_version_id`.
 | ------ | ---- | ------- |
 | `GET` | `/api/v1/effects/{id}/versions` | List versions |
 | `POST` | `/api/v1/effects/{id}/versions` | Publish new version |
+
+### Create version payload
+
+Same HTTP/mapping fields as create (without `name` / `description` / `is_public`):
+
+```ts
+{
+  version: string;                 // semver
+  url: string;
+  method: string;
+  input_schema?: object;
+  header_mappings: FieldMapping[];
+  body_mappings: FieldMapping[];
+  query_mappings?: FieldMapping[]; // default []
+}
+```
+
+```json
+POST /api/v1/effects/{effectId}/versions
+X-Workspace-ID: <wsId>
+
+{
+  "version": "1.1.0",
+  "url": "https://api.example.com/v2/notify",
+  "method": "POST",
+  "header_mappings": [
+    {
+      "source": { "type": "Const", "value": "Bearer secret" },
+      "target": "Authorization"
+    }
+  ],
+  "body_mappings": [
+    {
+      "source": { "type": "Variable", "value": "payload" },
+      "target": "body"
+    }
+  ]
+}
+```
+
+Workflow steps reference `effect_version_id`. Pin with `pin_version: true` in
+step definitions — see [workflows.md](./workflows.md).
 
 ---
 

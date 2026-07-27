@@ -2,7 +2,8 @@
 
 How to attach credentials when proxying d6e from a custom frontend. The JWT
 string is identical whether sent as Bearer or `auth-token` cookie — only the
-**transport** differs.
+**transport** differs. Cookie bridge pattern:
+[cookie-transport-bridge.md](../../d6e-auth-integration/references/cookie-transport-bridge.md).
 
 ## Workspace resolution rule of thumb
 

@@ -88,11 +88,31 @@ frontend:
 
 Respect SQL policies — denied queries return `POLICY_DENIED`. See [sql.md](./sql.md).
 
-## d6e console note
+## Custom frontend: Rust Bearer, not Cookie BFF
 
-The d6e SvelteKit UI also exposes pinned charts via Cookie BFF routes under
-`/api/workspaces/{id}/pinned-charts`. Custom frontends targeting the Rust API
-directly use `/api/v1/pinned-charts` with Bearer + header as documented here.
+```text
+┌─────────────────────────────────────────────────────────────┐
+│ Custom FE dashboards → POST /api/v1/pinned-charts (Bearer)  │
+│                      + X-Workspace-ID                       │
+│                      + SQL via POST …/sql (policy-aware)    │
+├─────────────────────────────────────────────────────────────┤
+│ d6e console BI UI  → Cookie BFF /api/workspaces/{id}/       │
+│                      pinned-charts (frontend DB, per-user)    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+The Cookie BFF and Rust API are **different backends**:
+
+| Surface | Path | Storage | Policies on chart SQL |
+| ------- | ---- | ------- | --------------------- |
+| **Rust (use this)** | `/api/v1/pinned-charts` | Workspace API | Yes — via `POST …/sql` |
+| **Console BFF** | `/api/workspaces/{id}/pinned-charts` | Frontend Postgres | No — local per-user charts |
+
+Custom frontends must use **Rust Bearer + `X-Workspace-ID`**, then re-run
+`sql_query` through your SQL proxy. Do not call the Cookie BFF pinned-chart
+routes unless you intentionally share the console's local DB semantics.
+
+See [console-bff-catalog.md](./console-bff-catalog.md) § Pinned charts.
 
 ## Related
 
