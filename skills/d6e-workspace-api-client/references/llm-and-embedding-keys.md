@@ -1,0 +1,144 @@
+# LLM and embedding API keys — who needs what
+
+Custom frontend developers **do not** put provider API keys (`GEMINI_API_KEY`,
+`GOOGLE_API_KEY`, `OPENAI_API_KEY`, …) in their app for chat, execute-by-intent,
+or workspace embeddings. The d6e **instance** routes cloud LLM and embedding
+calls through the **Vercel AI Gateway** using an instance virtual gateway key
+(`AI_GATEWAY_API_KEY` pinned in env, or fetched from d6e-auth via
+`D6E_AUTH_URL` + `D6E_AUTH_CLIENT_SECRET`). Your proxy only forwards the user's
+**Bearer JWT** (or a server-held `d6e_*` API key for automation).
+
+Upstream references:
+
+- Embedding bootstrap: [`packages/api/src/main.rs`](https://github.com/d6e-ai/d6e/blob/main/packages/api/src/main.rs) (`embedding_config`)
+- Chat / intent gateway routing: [`packages/frontend/src/lib/server/ai-providers.ts`](https://github.com/d6e-ai/d6e/blob/main/packages/frontend/src/lib/server/ai-providers.ts)
+- Execute-by-intent model resolution: [`execute-by-intent/+server.ts`](https://github.com/d6e-ai/d6e/blob/main/packages/frontend/src/routes/api/workflows/execute-by-intent/+server.ts)
+
+---
+
+## Decision table
+
+| Role | Chat / execute-by-intent | Column / file / table embeddings | SaaS API calls (freee, Google, …) |
+| ---- | ------------------------ | ---------------------------------- | --------------------------------- |
+| **Custom FE developer** | Bearer JWT (or `d6e_*` key on server). **No** provider keys in `.env`. May pass `provider` + `model` in `/api/chat` body only — keys stay on instance. | Same Bearer auth. **No** `GEMINI_API_KEY` in custom FE `.env`. | Bearer JWT + workspace-stored credentials (connect via Cookie BFF proxy). |
+| **Instance operator** | `AI_GATEWAY_API_KEY` **or** d6e-auth client credentials for virtual gateway key. Optional `TAVILY_API_KEY` (chat tools only). Optional `OPENAI_API_KEY` for `/api/transcribe` only. | `EMBEDDING_MODEL` + `D6E_AUTH_CLIENT_ID` + gateway key path (same as chat). Optional `EMBEDDING_DIMENSIONS`. | Provider OAuth app secrets on instance + user/workspace connect flow. |
+| **End user (SaaS OAuth)** | Logs in via your OAuth; no keys. | No keys. | Connects provider in UI; tokens stored in `frontend.saas_credential`. |
+
+Token shapes (instance JWT vs workspace-scoped vs `d6e_*`):
+[d6e-auth-integration token-kinds.md](../../d6e-auth-integration/references/token-kinds.md).
+
+---
+
+## Custom frontend `.env` — what you need
+
+| Variable | Required | Purpose |
+| -------- | -------- | ------- |
+| `D6E_BASE_URL` | Yes | Instance origin for all proxies |
+| `D6E_WORKSPACE_ID` | Yes | Server-pinned workspace (never from browser) |
+| `D6E_AUTH_CLIENT_ID` | Yes (local JWT verify) | Audience for `jwtVerify` on cookie routes |
+| OAuth client id/secret / redirect | Yes | Login flow ([d6e-auth-integration](../../d6e-auth-integration/SKILL.md)) |
+
+### DO NOT add to custom frontend `.env`
+
+| Variable | Why |
+| -------- | --- |
+| `GEMINI_API_KEY` / `GOOGLE_API_KEY` | Embeddings and Gemini chat route via gateway on the instance |
+| `OPENAI_API_KEY` | Chat/intent use gateway; only instance `/api/transcribe` reads this directly |
+| `ANTHROPIC_API_KEY` | Cloud providers use gateway, not per-provider env on instance |
+| `AI_GATEWAY_API_KEY` | Instance operator secret — not for custom FE repos |
+
+If embeddings return `503 EMBEDDING_NOT_CONFIGURED`, the **operator** must fix
+instance env — not your frontend `.env`.
+
+---
+
+## Instance operator — LLM gateway
+
+Cloud providers (`openai`, `anthropic`, `google`, `xai`, `meta`) are always
+routed through the Vercel AI Gateway. Configure **one** of:
+
+1. `AI_GATEWAY_API_KEY` — pinned virtual key (dev / self-hosted), or
+2. `D6E_AUTH_URL` (or `D6E_AUTH_BASE_URL`) + `D6E_AUTH_CLIENT_ID` +
+   `D6E_AUTH_CLIENT_SECRET` — runtime fetch of virtual gateway key.
+
+Local providers (`ollama`, `lmstudio`) bypass the gateway via `*_BASE_URL` env
+on the instance only.
+
+Chat entitlement: workspace subscription allow-list checked before spend.
+Execute-by-intent uses workspace `snsProvider` / `snsModel` defaults (see
+[async-intent-jobs.md](./async-intent-jobs.md)).
+
+---
+
+## Instance operator — embeddings
+
+Embedding is enabled when **all** of the following hold
+([`main.rs` embedding bootstrap](https://github.com/d6e-ai/d6e/blob/main/packages/api/src/main.rs)):
+
+| Variable | Required | Notes |
+| -------- | -------- | ----- |
+| `EMBEDDING_MODEL` | Yes | e.g. `google/gemini-embedding-2-preview` (multimodal for files) |
+| `D6E_AUTH_CLIENT_ID` | Yes | Instance id for gateway attribution tags |
+| `AI_GATEWAY_API_KEY` **or** d6e-auth fetch | Yes | Same gateway path as chat |
+| `EMBEDDING_DIMENSIONS` | No | Default `768` |
+
+Rust API calls `POST {gateway}/v1/embeddings` — not Google Gemini REST with a
+client-side Gemini key. See [`packages/api/src/embedding/`](https://github.com/d6e-ai/d6e/tree/main/packages/api/src/embedding).
+
+### Embedding error codes (custom FE should surface)
+
+| HTTP | Code | Meaning |
+| ---- | ---- | ------- |
+| 503 | `EMBEDDING_NOT_CONFIGURED` | Instance missing `EMBEDDING_MODEL` or gateway credentials |
+| 502 | `EMBEDDING_API_ERROR` | Gateway/upstream embedding call failed (e.g. search query embed) |
+| 503 | `MODEL_NOT_MULTIMODAL` | File embed/regenerate requires `gemini-embedding-2*` multimodal model |
+| 400 | `EMPTY_FILE_IDS` | `file_ids` must be a non-empty array (max 50) |
+
+Details and polling: [embeddings.md](./embeddings.md). RAG walkthroughs:
+[rag-recipes.md](./rag-recipes.md).
+
+---
+
+## Chat — `POST /api/chat`
+
+- Auth: `Cookie: auth-token=<jwt>` (Bearer rejected).
+- Client may send `provider` and `model` in the JSON body; the instance resolves
+  the actual model via `getModelAsync()` and **instance gateway key** — no client
+  provider secret.
+- Optional `baseUrl` only for local Ollama/LM Studio on the instance.
+- Full pipeline: [chat-streaming.md](./chat-streaming.md).
+
+---
+
+## Execute-by-intent — sync and async jobs
+
+- Auth: `Authorization: Bearer <jwt>`.
+- Request body has **no** `provider` or `model` fields. Model is resolved from
+  `workspace_default_models.sns_provider` / `sns_model` (admin-managed), with
+  entitlement and gateway fallback — same as SNS bots.
+- Async job create body matches sync (message, `workspaceId`, optional file refs)
+  — still no provider/model.
+- Contrast with `/api/chat`: [async-intent-jobs.md](./async-intent-jobs.md).
+
+---
+
+## Exceptions — keys that are NOT the AI Gateway
+
+| Feature | Env var | Scope | Custom FE |
+| ------- | ------- | ----- | --------- |
+| Voice transcribe | `OPENAI_API_KEY` on instance | `GET/POST /api/transcribe` (Whisper) | Proxy only; do not add key to FE |
+| Tavily web tools | `TAVILY_API_KEY` on instance | Chat + execute-by-intent tool set | Not configurable from custom FE |
+| SaaS OAuth apps | Provider client secrets | Instance OAuth apps | End users connect; see [saas-oauth-bff.md](./saas-oauth-bff.md) |
+
+---
+
+## Related
+
+| Document | Topic |
+| -------- | ----- |
+| [embeddings.md](./embeddings.md) | Column / file / table embedding API |
+| [rag-recipes.md](./rag-recipes.md) | End-to-end RAG without client Gemini keys |
+| [chat-streaming.md](./chat-streaming.md) | UIMessage chat, MCP, gateway models |
+| [async-intent-jobs.md](./async-intent-jobs.md) | NL automation, workspace default models |
+| [token-kinds.md](../../d6e-auth-integration/references/token-kinds.md) | JWT vs scoped JWT vs `d6e_*` API key |
+| [api-catalog.md](./api-catalog.md) | Full endpoint index |

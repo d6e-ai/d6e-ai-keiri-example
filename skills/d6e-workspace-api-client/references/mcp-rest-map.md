@@ -31,6 +31,37 @@ with `__d6e_sql` as the SQL tool for HITL approval.
 
 ---
 
+## Instance MCP wiring vs Cookie BFF MCP config
+
+Two different configuration layers:
+
+| Layer | Config | Who reads it | Custom FE |
+| ----- | ------ | ------------ | --------- |
+| **Instance env** | `D6E_MCP_SERVER_URL` (e.g. `http://mcp:8081/mcp` in `compose.yml`) | d6e frontend when building MCP client for chat / execute-by-intent | Set on **d6e instance** deploy — not in your SvelteKit app |
+| **Workspace DB** | Rows in `mcp_server` table | Same MCP loader + Cookie BFF `GET/POST /api/mcp-servers` | Admin configures in d6e console; loaded into chat/intent when `workspaceId` is set |
+| **Per-user timeout** | `mcpTimeoutMs` in workspace user settings | Chat path only | Cookie BFF `GET/PATCH /api/workspace-settings/{id}` |
+
+Chat and execute-by-intent call `getMCPTools()`:
+
+1. If `D6E_MCP_SERVER_URL` **and** a Bearer token (session JWT or API key) are
+   present → register the built-in `d6e` MCP server with
+   `Authorization: Bearer` + `X-Workspace-Id`.
+2. Merge enabled workspace MCP servers from the database (URL + optional OAuth
+   headers from `saas_credential`).
+3. Append **Tavily** tools when `TAVILY_API_KEY` is set on the **instance**
+   (not per-workspace) — `getTavilyTools()` in `tavily-tools.ts`.
+
+Custom frontends **cannot** configure `D6E_MCP_SERVER_URL` from the browser.
+Proxy `/api/chat` or execute-by-intent; ensure the instance operator set env
+vars. Workspace-specific external MCP URLs are managed via console
+[memories-mcp-settings.md § mcp-servers](./memories-mcp-settings.md) (Cookie
+admin BFF — no Rust REST equivalent for CRUD).
+
+**Tavily:** instance-level `TAVILY_API_KEY` only. No REST shortcut — available
+in chat and execute-by-intent agent tool sets, not in `/api/v1/*`.
+
+---
+
 ## Mapping table (major tools)
 
 | MCP tool | REST / BFF equivalent | Notes |

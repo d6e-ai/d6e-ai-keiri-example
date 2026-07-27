@@ -1,6 +1,6 @@
 ---
 name: d6e-workspace-api-client
-description: Builds the server-side proxy layer that lets a custom frontend talk to a d6e workspace — see references/api-catalog.md for the full endpoint inventory. Covers file upload/list/download/delete (two-step saas-proxy-download + streaming proxy), workspace SQL execute/preview, named workflow CRUD/execute, workspace member admin, execute-by-intent (sync and async job API), chat-session CRUD, workspace prompt rule registration, SaaS API calls via saas-proxy (+ binary saas-proxy-download), Google Drive sync mirror, and pending-invitation admin. Use when adding a `/api/*` route that talks to d6e, when implementing file download via same-origin streaming proxy (never 302 to D6E_BASE_URL), when deploying on Vercel maxDuration/waitUntil or Cloudflare Workers CPU limits, when surfacing SQL POLICY_DENIED to the UI, when sync execute-by-intent times out and you need async jobs with poll/cancel/heartbeat, or when calling freee/Google/Notion with workspace-stored credentials.
+description: Builds the server-side proxy layer that lets a custom frontend talk to a d6e workspace — see references/api-catalog.md for the full endpoint inventory. Covers file upload/list/download/delete (two-step saas-proxy-download + streaming proxy), workspace SQL execute/preview, named workflow CRUD/execute, workspace member admin, execute-by-intent (sync and async job API), chat-session CRUD, workspace prompt rule registration, SaaS API calls via saas-proxy (+ binary saas-proxy-download), Google Drive sync mirror, embeddings/RAG (column, file, table row) without client provider keys, and pending-invitation admin. Use when adding a `/api/*` route that talks to d6e, when implementing file download via same-origin streaming proxy (never 302 to D6E_BASE_URL), when deploying on Vercel maxDuration/waitUntil or Cloudflare Workers CPU limits, when surfacing SQL POLICY_DENIED to the UI, when sync execute-by-intent times out and you need async jobs with poll/cancel/heartbeat, when calling freee/Google/Notion with workspace-stored credentials, or when confused whether your app needs GEMINI_API_KEY / OPENAI_API_KEY for chat or embeddings (it does not — instance AI Gateway handles provider routing).
 ---
 
 # d6e Workspace API Client
@@ -25,6 +25,12 @@ Server-side glue between a custom frontend and a d6e workspace:
 - **Async intent jobs** for long LLM runs on Vercel / Cloudflare — see
   [references/async-intent-jobs.md](references/async-intent-jobs.md) and
   [references/platform-timeouts.md](references/platform-timeouts.md).
+- **Embeddings / RAG without client provider keys** — Bearer JWT to Rust
+  embedding APIs; instance `EMBEDDING_MODEL` + AI Gateway. Do **not** add
+  `GEMINI_API_KEY` to custom FE `.env`. See
+  [references/llm-and-embedding-keys.md](references/llm-and-embedding-keys.md),
+  [references/embeddings.md](references/embeddings.md), and
+  [references/rag-recipes.md](references/rag-recipes.md).
 
 Canonical d6e console wrappers:
 [`packages/frontend/src/lib/server/d6e-cloud.ts`](https://gitlab.com/cauchye/d6e-ai/d6e/-/blob/main/packages/frontend/src/lib/server/d6e-cloud.ts).
@@ -39,6 +45,10 @@ Canonical d6e console wrappers:
 - "Call freee / Google with workspace credentials" / "SaaS 連携 API をサーバから"
 - "Build admin members / Drive Sync / invitation UI"
 - "Deploy on Cloudflare Workers — what patterns avoid CPU timeout?"
+- "Do I need GEMINI_API_KEY / OPENAI_API_KEY for embeddings or chat?" /
+  "カスタムFEに Gemini API キーは必要？" — **No**; see
+  [llm-and-embedding-keys.md](references/llm-and-embedding-keys.md)
+- "Build RAG over uploaded files or SQL tables" — [rag-recipes.md](references/rag-recipes.md)
 
 ## Core Concepts
 
@@ -148,14 +158,19 @@ Detailed guides (read before implementing):
 | [references/workspace-skills-bff.md](references/workspace-skills-bff.md) | Skills discover/upload/install BFF + public skill markdown pull |
 | [references/memories-mcp-settings.md](references/memories-mcp-settings.md) | MCP servers, memories, workspace-settings, POST /api/verify |
 | [references/auth-header-matrix.md](references/auth-header-matrix.md) | Path vs header workspace resolution; Cookie vs Bearer |
+| [../d6e-auth-integration/references/custom-frontend-auth-decision-tree.md](../d6e-auth-integration/references/custom-frontend-auth-decision-tree.md) | Auth decision tree — Cookie BFF vs `d6e_*` key; never browser API keys |
 | [references/download-two-step.md](references/download-two-step.md) | **Critical** — saas-proxy-download → storage id → streaming GET proxy; no 302 |
 | [references/saas-proxy-download.md](references/saas-proxy-download.md) | Full request/response schema, editor permission, `suggested_filename`, metadata |
 | [references/saas-proxy.md](references/saas-proxy.md) | JSON SaaS proxy, 10 MB cap, `file_id` multipart, vs saas-proxy-download |
 | [references/file-storage.md](references/file-storage.md) | List/get/multipart/JSON upload/delete/download; `X-Workspace-ID`; silent null metadata |
 | [references/documents.md](references/documents.md) | Document CRUD + versions; header-scoped; list omits content |
 | [references/sql.md](references/sql.md) | Execute/preview, `uuidv7()`, 23-char tables, `POLICY_DENIED`, no GET /tables |
-| [references/embeddings.md](references/embeddings.md) | Column / file / table embeddings; generate, status, search, regenerate |
+| [references/llm-and-embedding-keys.md](references/llm-and-embedding-keys.md) | **No client provider keys** — gateway, env by role, embedding errors |
+| [references/embeddings.md](references/embeddings.md) | Column / file / table embeddings; sync vs async; status; permissions |
+| [references/rag-recipes.md](references/rag-recipes.md) | File / table / column RAG — upload, embed, poll, search, LLM |
 | [references/workflows.md](references/workflows.md) | Workflow CRUD + execute; list-by-name pattern; Docker STF 120s tip |
+| [references/workflow-step-schemas.md](references/workflow-step-schemas.md) | `input_steps` / `stf_steps` / `effect_steps` JSON shapes |
+| [references/billing-entitlement.md](references/billing-entitlement.md) | 402 LLM soft gate — UI handling; entitlement is service JWT only |
 | [references/stfs-and-effects.md](references/stfs-and-effects.md) | STFs, versions, secrets, instant-run, describe; Effects + versions |
 | [references/policies.md](references/policies.md) | Policies + policy-groups CRUD; operations/modes; editor permission |
 | [references/pinned-charts.md](references/pinned-charts.md) | Dashboard charts; `sql_query` + `chart_type`; visible-only list |
@@ -250,6 +265,8 @@ export const POST: RequestHandler = async (event) => {
 | `executeByIntent` 504 timedOut | Wrapper shorter than LLM run | Lower timeout or use [async jobs](references/async-intent-jobs.md) |
 | Async job 429 | 3 concurrent jobs / workspace | Wait or cancel |
 | `saas-proxy` 404 credential | Provider not connected | Connect via [saas-oauth-bff.md](references/saas-oauth-bff.md) |
+| `503 EMBEDDING_NOT_CONFIGURED` | Instance missing embedding env | Operator fixes `EMBEDDING_MODEL` + gateway — [llm-and-embedding-keys.md](references/llm-and-embedding-keys.md) |
+| `400 EMPTY_FILE_IDS` on file embed | Empty or missing `file_ids` | List files; pass explicit IDs — [embeddings.md](references/embeddings.md) |
 | Download fails in browser | Called d6e URL directly | [download-two-step.md](references/download-two-step.md) |
 | OOM on serverless download | Buffered full body | Stream + [platform-timeouts.md](references/platform-timeouts.md) |
 | Drive `/sync` 200 but no data | Background job | Poll `/status` |

@@ -28,6 +28,30 @@ and [platform-timeouts.md](./platform-timeouts.md).
 All use `Authorization: Bearer <jwt>`. Pin `workspaceId` in the create body
 from `getD6eWorkspaceId(caller)`.
 
+## Model resolution — no provider in request body
+
+Sync and async execute-by-intent **do not** accept `provider` or `model` in the
+JSON body. The instance loads `workspace_default_models.sns_provider` and
+`sns_model` (admin-managed SNS defaults), checks entitlement, then calls
+`getModelAsync()` with the instance Vercel AI Gateway key — same path as SNS
+bots ([`execute-by-intent/+server.ts`](https://github.com/d6e-ai/d6e/blob/main/packages/frontend/src/routes/api/workflows/execute-by-intent/+server.ts)).
+
+Custom frontends forward Bearer JWT only — no `OPENAI_API_KEY` / `GEMINI_API_KEY`
+in your `.env` for this flow. See
+[llm-and-embedding-keys.md](./llm-and-embedding-keys.md).
+
+### Contrast with `POST /api/chat`
+
+| | `/api/chat` | `/api/workflows/execute-by-intent` (+ async jobs) |
+| --- | --- | --- |
+| Auth | Cookie `auth-token` | Bearer JWT |
+| `provider` / `model` in body | **Yes** — client selects (gateway still on instance) | **No** — resolved from workspace `snsProvider` / `snsModel` |
+| Streaming | UIMessage stream | Single JSON `IntentResponse` (or async poll) |
+| MCP + SQL HITL | Full chat UX | Fixed automation tool set |
+
+Chat model defaults use `chatProvider` / `chatModel` from the same
+`workspace_default_models` table — different columns from SNS defaults.
+
 ## Job lifecycle
 
 ```
@@ -180,6 +204,13 @@ URLs to the browser.
 | Stale `running` + old heartbeat | Runner killed mid-flight | d6e marks `failed` after 60s stale; check instance health |
 | `cancelled: false` | Job already terminal | Read poll `status` |
 | Result lost after tab close | No persistence | Use `waitUntil()` or rely on d6e `intent_job` row + reload poll |
+
+## Related
+
+- [llm-and-embedding-keys.md](./llm-and-embedding-keys.md) — gateway keys, no client provider secrets
+- [chat-streaming.md](./chat-streaming.md) — conversational agent with optional provider/model in body
+- [embeddings.md](./embeddings.md) — RAG via REST without client embedding keys
+- [rag-recipes.md](./rag-recipes.md) — pass search hits into execute-by-intent
 
 ## Upstream reference
 

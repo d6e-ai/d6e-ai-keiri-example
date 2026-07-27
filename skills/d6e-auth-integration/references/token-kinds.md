@@ -100,6 +100,7 @@ Need to create API keys programmatically?
 
 ## Related
 
+- [custom-frontend-auth-decision-tree.md](./custom-frontend-auth-decision-tree.md) — Bearer vs Cookie, browser vs CI
 - [platform-adapters.md](./platform-adapters.md) — cookie/session patterns per host
 - [`d6e-auth-integration` SKILL.md](../SKILL.md) — OAuth flow, cookies, refresh
 - [`d6e-workspace-api-client` auth-header matrix](../../d6e-workspace-api-client/references/auth-header-matrix.md)

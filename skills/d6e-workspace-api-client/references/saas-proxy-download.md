@@ -9,9 +9,10 @@ The MCP tool `d6e_download_external_file` calls this endpoint internally.
 
 ## Prerequisites
 
-- Workspace **admin** must connect the provider in the d6e console settings
-  (SaaS integrations). There is no API to create credentials from a custom
-  frontend.
+- The workspace must have a stored credential for the target `provider`.
+  Custom frontends **can** drive the connect flow by proxying the Cookie BFF
+  (`/api/saas-auth/*`, `/api/saas-credentials`) — not limited to the d6e
+  console UI. See [saas-oauth-bff.md](./saas-oauth-bff.md).
 - Caller must be a workspace **member** with **editor** permission on
   `storage_file` (same gate as multipart upload). Policy-restricted members
   receive `403 Forbidden`.

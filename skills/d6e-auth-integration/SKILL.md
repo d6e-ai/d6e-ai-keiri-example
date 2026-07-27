@@ -596,6 +596,7 @@ cookie. Have users log out and back in after a profile rename, or call
 | Document | Contents |
 | -------- | -------- |
 | [references/token-kinds.md](references/token-kinds.md) | Instance JWT vs workspace-scoped JWT (`d6e_workspace_id`) vs API key `d6e_`; `reject_scoped_token` on `/api/v1/api-keys`; `jwtVerify` requires `aud` === `D6E_AUTH_CLIENT_ID` |
+| [references/custom-frontend-auth-decision-tree.md](references/custom-frontend-auth-decision-tree.md) | Browser Cookie BFF vs CI `d6e_*` key — when Bearer vs Cookie; never put API keys in the browser |
 | [references/platform-adapters.md](references/platform-adapters.md) | SvelteKit hooks pattern (this repo) vs Next.js App Router and Cloudflare Workers (cookies, OAuth callback on edge, async jobs — link to [platform-timeouts.md](../d6e-workspace-api-client/references/platform-timeouts.md)) |
 
 ## Related Skills

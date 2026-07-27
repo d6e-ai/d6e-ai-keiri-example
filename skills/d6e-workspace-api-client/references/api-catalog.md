@@ -90,6 +90,10 @@ Header-scoped like files — see [auth-header-matrix.md](./auth-header-matrix.md
 
 ## Embeddings (column / files / tables)
 
+**Keys:** Custom FE proxies use Bearer JWT only — **no** `GEMINI_API_KEY` /
+`OPENAI_API_KEY` in your app. Instance operator configures `EMBEDDING_MODEL` +
+Vercel AI Gateway. See [llm-and-embedding-keys.md](./llm-and-embedding-keys.md).
+
 | Method | Path | Auth | Purpose | Detail |
 | ------ | ---- | ---- | ------- | ------ |
 | POST | `/api/v1/workspaces/{id}/embeddings/generate` | Bearer (path ws) | Start column embedding job | [embeddings.md](./embeddings.md) |
@@ -104,7 +108,35 @@ Header-scoped like files — see [auth-header-matrix.md](./auth-header-matrix.md
 | POST | `/api/v1/workspaces/{id}/embeddings/tables/search` | Bearer (path ws) | Cross-table semantic search | [embeddings.md](./embeddings.md) |
 | POST | `/api/v1/workspaces/{id}/embeddings/tables/regenerate` | Bearer (path ws) | Regenerate table embeddings | [embeddings.md](./embeddings.md) |
 
-Long jobs — poll status endpoints; see [embeddings.md](./embeddings.md).
+Column `generate` is **synchronous** (`generated_count`); files and table row
+embeds are **async** — poll status. RAG recipes:
+[rag-recipes.md](./rag-recipes.md).
+
+---
+
+## GraphQL
+
+**Not available** for custom frontends. The Rust API builds a placeholder
+`async_graphql` schema (`QueryRoot.health` only) but does **not** mount a public
+GraphQL HTTP route — use SQL execute and the REST catalog above.
+
+---
+
+## Internal / operator-only configuration
+
+These are **not** custom frontend `.env` variables. Instance operators configure
+them on the d6e deployment:
+
+| Variable / surface | Purpose |
+| ------------------ | ------- |
+| `AI_GATEWAY_API_KEY` or d6e-auth client credentials | Cloud LLM + embeddings via Vercel AI Gateway |
+| `EMBEDDING_MODEL`, `EMBEDDING_DIMENSIONS`, `D6E_AUTH_CLIENT_ID` | Rust embedding API ([llm-and-embedding-keys.md](./llm-and-embedding-keys.md)) |
+| `OPENAI_API_KEY` | Instance `POST /api/transcribe` (Whisper) only |
+| `TAVILY_API_KEY` | Tavily tools in chat / execute-by-intent |
+| `OLLAMA_BASE_URL`, `LMSTUDIO_BASE_URL` | Local LLM providers on instance |
+
+End users connect SaaS via OAuth/PAT ([saas-oauth-bff.md](./saas-oauth-bff.md));
+credentials land in `frontend.saas_credential` for Bearer `saas-proxy` calls.
 
 ---
 

@@ -56,8 +56,9 @@ interface Workflow {
 ```
 
 Create/update payloads accept `input_steps`, `stf_steps`, and `effect_steps`
-with version ids and field mappings — see d6e console
-[`d6e-cloud.ts`](https://gitlab.com/cauchye/d6e-ai/d6e/-/blob/main/packages/frontend/src/lib/server/d6e-cloud.ts)
+with version ids and field mappings — see
+[workflow-step-schemas.md](./workflow-step-schemas.md) and d6e console
+[`d6e-cloud.ts`](https://github.com/d6e-ai/d6e/blob/main/packages/frontend/src/lib/server/d6e-cloud.ts)
 `CreateWorkflowPayload` / `UpdateWorkflowPayload`.
 
 ## List-by-name pattern (expense-check)

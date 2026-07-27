@@ -62,7 +62,13 @@ Content-Type: application/json
 | `deny` | Block when condition matches |
 
 SQL execute returns `403` with `POLICY_DENIED` when a deny policy blocks the
-statement — preview does **not** evaluate policies. See [sql.md](./sql.md).
+statement — **`POST …/sql/preview` does not evaluate policies** (membership
+only; returns transformed SQL and `requires_approval`). A query that preview
+“allows” can still fail on execute. See [sql.md](./sql.md).
+
+Upstream comment in
+[`packages/api/src/routes/v1/sql.rs`](https://github.com/d6e-ai/d6e/blob/main/packages/api/src/routes/v1/sql.rs):
+*“Preview does not evaluate runtime policy conditions.”*
 
 Storage upload/download failures with `403` often indicate `storage_write` or
 `storage_read` denial — see [file-storage.md](./file-storage.md).
@@ -83,6 +89,25 @@ Groups organize policies and map workspace **users** and **STFs** (workflow
 automation identities) to shared permissions. Policies reference
 `policy_group_id`; members inherit access when their user id or STF id appears
 in the group.
+
+### Policy subjects (who is evaluated)
+
+Row-level SQL and storage checks use `PolicySubject` in
+[`packages/api/src/policy/mod.rs`](https://github.com/d6e-ai/d6e/blob/main/packages/api/src/policy/mod.rs):
+
+| Subject | When used | Policy behavior |
+| ------- | --------- | --------------- |
+| **User** (`user_id`) | Bearer JWT, API key (`d6e_*`), workflow execute as user | Match `policy_group.user_ids` |
+| **Stf** (`stf_id`) | Docker/internal STF SQL (`AuthContext::InternalStf`) | Match `policy_group.stf_ids` |
+| **Internal** | Instant-run code mode without caller user; internal bypass | Full access — bypasses policy checks |
+
+Interactive custom frontends and API keys always evaluate as **User**. Workflow
+STF containers authenticate as **InternalStf** and evaluate as **Stf** — assign
+STF ids to policy groups for automation runners.
+
+STF SQL errors, modql conditions, and DDL rules:
+[sql-errors-and-policy.md](https://github.com/d6e-ai/d6e-docker-stf-skills/blob/main/skills/d6e-docker-stf-development/references/sql-errors-and-policy.md)
+(d6e-docker-stf-skills).
 
 ### Auth
 
