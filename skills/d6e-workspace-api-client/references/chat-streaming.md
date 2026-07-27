@@ -2,7 +2,10 @@
 
 Interactive LLM chat with MCP tool execution, SQL human-in-the-loop (HITL)
 approval, `ask_user` prompts, memory injection, and context compaction.
-Returns a **UIMessage stream** (Vercel AI SDK protocol), not plain SSE text.
+Returns a **UIMessage stream** (Vercel AI SDK protocol via `streamText`), not
+plain SSE text. Provider keys stay on the instance gateway — see
+[llm-and-embedding-keys.md](./llm-and-embedding-keys.md). execute-by-intent uses
+the same SDK with `generateText` (JSON, not this stream).
 
 This is the d6e console's primary agent surface. Custom frontends that need
 full MCP tool access (beyond what REST exposes) must proxy this route or use

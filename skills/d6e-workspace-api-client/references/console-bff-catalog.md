@@ -127,7 +127,7 @@ See [embeddings.md](./embeddings.md).
 
 | Feature | Cookie BFF | Rust `/api/v1` | Notes |
 | ------- | ---------- | -------------- | ----- |
-| Get / set / reset | `GET/PUT/DELETE /api/workspaces/{id}/default-models` | **None** | Frontend DB; admin only |
+| Get / set / reset | `GET/PUT/DELETE /api/workspaces/{id}/default-models` | **None** | Frontend DB; **admin only**. `chat*` = chat UI seed; `sns*` = execute-by-intent. Details: [llm-and-embedding-keys.md § Changing models](./llm-and-embedding-keys.md#changing-models-via-api) |
 
 Chat UI reads defaults server-side — members do not call this route directly.
 

@@ -4,6 +4,12 @@ Detaches long-running `execute-by-intent` agent runs from the HTTP request
 lifetime. Available on d6e instances running `feat/async-intent-jobs` or
 later.
 
+**Runtime:** both sync `POST /api/workflows/execute-by-intent` and these async
+jobs call the **Vercel AI SDK** `generateText()` on the d6e instance (same `ai`
+package as chat). The HTTP response is a single JSON `IntentResponse` (or a
+pollable job) — **not** a UIMessage stream. Provider keys stay on the instance
+gateway; see [llm-and-embedding-keys.md](./llm-and-embedding-keys.md).
+
 See also [docs/d6e-api-integration.md §2b](../../../docs/d6e-api-integration.md)
 and [platform-timeouts.md](./platform-timeouts.md).
 
@@ -45,12 +51,14 @@ in your `.env` for this flow. See
 | | `/api/chat` | `/api/workflows/execute-by-intent` (+ async jobs) |
 | --- | --- | --- |
 | Auth | Cookie `auth-token` | Bearer JWT |
+| Vercel AI SDK | `streamText` → UIMessage stream | `generateText` → JSON `IntentResponse` |
 | `provider` / `model` in body | **Yes** — client selects (gateway still on instance) | **No** — resolved from workspace `snsProvider` / `snsModel` |
-| Streaming | UIMessage stream | Single JSON `IntentResponse` (or async poll) |
+| Change defaults via API | Optional UI seed: `chatProvider`/`chatModel` | **Yes** — admin `PUT …/default-models` (`snsProvider`/`snsModel`) |
+| Streaming | UIMessage stream | Single JSON (or async poll) |
 | MCP + SQL HITL | Full chat UX | Fixed automation tool set |
 
-Chat model defaults use `chatProvider` / `chatModel` from the same
-`workspace_default_models` table — different columns from SNS defaults.
+How to change SNS / chat defaults:
+[llm-and-embedding-keys.md § Changing models](./llm-and-embedding-keys.md#changing-models-via-api).
 
 ## Job lifecycle
 

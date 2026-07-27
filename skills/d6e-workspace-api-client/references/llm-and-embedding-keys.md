@@ -99,6 +99,19 @@ Details and polling: [embeddings.md](./embeddings.md). RAG walkthroughs:
 
 ---
 
+## Chat and execute-by-intent — both Vercel AI SDK
+
+Both LLM surfaces run on the **d6e instance** with the **Vercel AI SDK** (`ai`
+package) and the instance AI Gateway key. Custom frontends never embed provider
+SDKs or provider API keys for these calls.
+
+| Surface | SDK entrypoint | HTTP shape |
+| ------- | -------------- | ---------- |
+| `POST /api/chat` | `streamText` | UIMessage stream ([chat-streaming.md](./chat-streaming.md)) |
+| `POST /api/workflows/execute-by-intent` (+ async jobs) | `generateText` | JSON `IntentResponse` or job poll ([async-intent-jobs.md](./async-intent-jobs.md)) |
+
+---
+
 ## Chat — `POST /api/chat`
 
 - Auth: `Cookie: auth-token=<jwt>` (Bearer rejected).
@@ -119,6 +132,39 @@ Details and polling: [embeddings.md](./embeddings.md). RAG walkthroughs:
 - Async job create body matches sync (message, `workspaceId`, optional file refs)
   — still no provider/model.
 - Contrast with `/api/chat`: [async-intent-jobs.md](./async-intent-jobs.md).
+
+---
+
+## Changing models via API
+
+| Goal | How |
+| ---- | --- |
+| Pick model **per chat request** | Body `provider` + optional `model` on `POST /api/chat` |
+| Change **execute-by-intent / SNS** default | Workspace admin Cookie BFF `PUT /api/workspaces/{id}/default-models` with `snsProvider` + `snsModel` together |
+| Change **chat UI seed** defaults | Same endpoint with `chatProvider` + `chatModel` together (UI may still override from client storage) |
+| Reset both pairs | `DELETE /api/workspaces/{id}/default-models` → openai / gpt-5.6-luna |
+
+```http
+PUT /api/workspaces/{workspaceId}/default-models
+Cookie: auth-token=<admin jwt>
+Content-Type: application/json
+
+{
+  "snsProvider": "anthropic",
+  "snsModel": "claude-sonnet-4-6"
+}
+```
+
+- **Admin only** (`verifyWorkspaceAdmin`). Members cannot GET/PUT this route.
+- Providers must be in the instance allowlist (`openai`, `anthropic`, `google`,
+  `xai`, `meta`, `ollama`, `lmstudio`). Model id is a non-empty string (max 200);
+  catalog membership is not re-validated server-side on PUT.
+- Hosted models are still filtered at call time by entitlement `allowedModels`.
+- Indexed in [console-bff-catalog.md](./console-bff-catalog.md).
+
+There is **no** public Rust `/api/v1/...` equivalent for default-models — custom
+frontends proxy the Cookie BFF (or instruct admins to set defaults in the d6e
+console).
 
 ---
 
