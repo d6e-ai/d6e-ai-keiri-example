@@ -137,12 +137,17 @@ SDKs or provider API keys for these calls.
 
 ## Changing models via API
 
-| Goal | How |
-| ---- | --- |
-| Pick model **per chat request** | Body `provider` + optional `model` on `POST /api/chat` |
-| Change **execute-by-intent / SNS** default | Workspace admin Cookie BFF `PUT /api/workspaces/{id}/default-models` with `snsProvider` + `snsModel` together |
-| Change **chat UI seed** defaults | Same endpoint with `chatProvider` + `chatModel` together (UI may still override from client storage) |
-| Reset both pairs | `DELETE /api/workspaces/{id}/default-models` → openai / gpt-5.6-luna |
+**Applies only to chat and execute-by-intent (and SNS bots).** It does **not**
+change the embedding model — that is instance env only (`EMBEDDING_MODEL` /
+`EMBEDDING_DIMENSIONS`; see [Instance operator — embeddings](#instance-operator--embeddings)).
+
+| Goal | How | Scope |
+| ---- | --- | ----- |
+| Pick model **per chat request** | Body `provider` + optional `model` on `POST /api/chat` (example in [chat-streaming.md](./chat-streaming.md#request-body)) | That HTTP request only |
+| Change **execute-by-intent / SNS** default | Workspace admin Cookie BFF `PUT /api/workspaces/{id}/default-models` with `snsProvider` + `snsModel` together | **Whole workspace** |
+| Change **chat UI seed** defaults | Same endpoint with `chatProvider` + `chatModel` together (browser IndexedDB may still override) | Workspace seed; not per-user server setting |
+| Reset chat + SNS pairs | `DELETE /api/workspaces/{id}/default-models` → openai / gpt-5.6-luna | Whole workspace |
+| Change **embedding** model | Instance operator sets `EMBEDDING_MODEL` (restart/redeploy). **No** workspace or chat API | **Whole instance** |
 
 ```http
 PUT /api/workspaces/{workspaceId}/default-models
@@ -164,7 +169,7 @@ Content-Type: application/json
 
 There is **no** public Rust `/api/v1/...` equivalent for default-models — custom
 frontends proxy the Cookie BFF (or instruct admins to set defaults in the d6e
-console).
+console). Embeddings have **no** equivalent workspace API either.
 
 ---
 
