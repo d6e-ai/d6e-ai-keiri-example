@@ -23,8 +23,9 @@ flowchart TD
   BROWSER --> COOKIE[Same-origin BFF proxy]
   COOKIE --> OAUTH[Instance-brokered OAuth]
   OAUTH --> JWT_COOKIE[JWT in HTTP-only cookies<br/>auth-access / auth-refresh]
-  JWT_COOKIE --> RUST_BEARER[Rust API: BFF forwards Bearer from cookie]
-  JWT_COOKIE --> COOKIE_ONLY[Cookie-only routes:<br/>/api/chat-sessions<br/>/api/workspace-prompt-rules<br/>/api/chat]
+  JWT_COOKIE --> BRIDGE[BFF reads auth-access<br/>→ injects Cookie: auth-token upstream]
+  BRIDGE --> RUST_BEARER[Rust API: Authorization Bearer]
+  BRIDGE --> COOKIE_ONLY[Cookie-only routes:<br/>/api/chat-sessions<br/>/api/workspace-prompt-rules<br/>/api/chat]
 
   S2S --> APIKEY[d6e_* API key in server env only]
   APIKEY --> RUST_ONLY[Rust /api/v1 Bearer only]
@@ -46,9 +47,12 @@ flowchart TD
 ```
 Is the caller a browser tab?
   YES → Never put d6e_* API keys in the browser or in client-side JS.
-        Proxy through your same-origin BFF; store OAuth tokens in HTTP-only cookies.
-        Use Cookie transport for /api/chat and chat-session routes.
-        Use Bearer (forwarded server-side from the session) for Rust /api/v1.
+        Proxy through your same-origin BFF; store OAuth tokens in HTTP-only cookies
+        (auth-access / auth-refresh on your origin).
+        BFF reads auth-access via hooks.server.ts → event.locals.accessToken.
+        For d6e Cookie routes, inject Cookie: auth-token=<jwt> on server fetch
+        (see cookie-transport-bridge.md) — the browser never holds auth-token.
+        Use Bearer (same JWT, server-forwarded) for Rust /api/v1.
 
 Is the caller a server script, MCP, or CI job without interactive login?
   YES → Use d6e_* API key as Bearer on Rust /api/v1.
@@ -75,7 +79,10 @@ Need to mint API keys programmatically?
 | `/api/workflows/execute-by-intent` (+ jobs) | Yes | No |
 | Custom frontend pattern | BFF reads cookie, forwards Bearer upstream | Browser hits same-origin BFF only |
 
-The JWT string is identical; only the **transport** differs. See
+The JWT string is identical; only the **transport** differs. Custom frontends
+store it in `auth-access`; d6e Cookie BFF routes expect `auth-token` — your BFF
+bridges the two server-side. See
+[cookie-transport-bridge.md](./cookie-transport-bridge.md) and
 [auth-header-matrix.md](../../d6e-workspace-api-client/references/auth-header-matrix.md).
 
 ---
@@ -133,6 +140,7 @@ Operational pattern:
 
 ## Related
 
+- [cookie-transport-bridge.md](./cookie-transport-bridge.md) — `auth-access` → `auth-token`
 - [token-kinds.md](./token-kinds.md) — JWT, scoped JWT, API key comparison
 - [platform-adapters.md](./platform-adapters.md) — cookie/session per host
 - [auth-header-matrix.md](../../d6e-workspace-api-client/references/auth-header-matrix.md) — per-endpoint headers

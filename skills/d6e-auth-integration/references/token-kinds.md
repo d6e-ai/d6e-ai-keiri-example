@@ -100,6 +100,7 @@ Need to create API keys programmatically?
 
 ## Related
 
+- [jwt-claims-and-lifetimes.md](./jwt-claims-and-lifetimes.md) — claim table, lifetimes, local decode vs `jwtVerify`
 - [custom-frontend-auth-decision-tree.md](./custom-frontend-auth-decision-tree.md) — Bearer vs Cookie, browser vs CI
 - [platform-adapters.md](./platform-adapters.md) — cookie/session patterns per host
 - [`d6e-auth-integration` SKILL.md](../SKILL.md) — OAuth flow, cookies, refresh

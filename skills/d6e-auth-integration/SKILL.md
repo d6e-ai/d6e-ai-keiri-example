@@ -297,26 +297,38 @@ Omitting it keeps the legacy behavior (earliest registration wins).
 
 ### Step 2: `/auth/login`
 
+The login route is a **deliberate splash page** — not an instant GET redirect.
+`hooks.server.ts` sends unauthenticated users to `/auth/login?returnTo=…`; the
+page renders a "Sign in with d6e" button; only a **form POST** starts OAuth.
+
 ```ts
-// src/routes/auth/login/+server.ts
-import { redirect } from '@sveltejs/kit';
-
-import { buildAuthorizeUrl, createOauthState } from '$lib/server/oauth';
-import { writeOauthStateCookie } from '$lib/server/session';
-
-import type { RequestHandler } from './$types';
-
-export const GET: RequestHandler = async (event) => {
-  const state = createOauthState();
-  const returnTo = event.url.searchParams.get('returnTo') ?? '/';
-  writeOauthStateCookie(event, encodeStateCookieValue(state, returnTo));
-  throw redirect(302, buildAuthorizeUrl('/auth/login', state));
-};
+// src/routes/auth/login/+page.server.ts — actions.default
+const formData = await event.request.formData();
+const returnTo = sanitizeReturnTo(
+  typeof formData.get('returnTo') === 'string' ? formData.get('returnTo') : null
+);
+const state = createOauthState();
+writeOauthStateCookie(event, encodeStateCookieValue(state, returnTo));
+throw redirect(303, buildAuthorizeUrl('/auth/login', state));
 ```
 
-`createOauthState()` is 32 cryptographic bytes base64url-encoded; the
-cookie carries `{state, returnTo}` so `/auth/callback` can both verify
-CSRF and bounce the user to a deep link.
+```svelte
+<!-- src/routes/auth/login/+page.svelte -->
+<form method="POST">
+  <input type="hidden" name="returnTo" value={data.returnTo} />
+  <button type="submit">Sign in with d6e</button>
+</form>
+```
+
+`load()` reads `?returnTo=` from the URL (sanitized by `isSafeReturnTo()`).
+`createOauthState()` is 32 cryptographic bytes base64url-encoded; the state
+cookie carries `{state, returnTo}` so `/auth/callback` can verify CSRF and
+bounce the user to a deep link. The splash exists so `/auth/logout` can clear
+d6e-auth's session before the user opts in again — an immediate GET redirect
+would silently re-authenticate anyone with a live d6e-auth cookie.
+
+Real files: [`src/routes/auth/login/+page.server.ts`](../../src/routes/auth/login/+page.server.ts),
+[`src/routes/auth/login/+page.svelte`](../../src/routes/auth/login/+page.svelte).
 
 ### Step 3: `/auth/callback`
 
@@ -479,7 +491,33 @@ member" (route to `/auth/no-access`) from "couldn't ask" (route to
 - When `D6E_AUTH_URL` is unreachable during logout, the user is still locally signed out (cookies clear synchronously); the d6e-auth-side cleanup waits for the upstream to recover.
 - Vercel deploys map env vars 1:1 with `.env`. Don't forget to set `D6E_AUTH_REDIRECT_URI` per environment. Preview deploys need their own redirect URIs registered on d6e-auth — workspace admins can add them in Workspace Settings → Integration → **Redirect URIs** (or a franchise owner/admin can add them instance-wide in the franchise portal).
 
+## End-user OAuth vs SaaS OAuth
+
+This skill covers **end-user login** to your custom frontend (d6e-auth
+Authorization Code flow → instance JWT in cookies). That is separate from
+**SaaS provider OAuth** (connecting freee, Google Workspace, Notion, etc. to a
+workspace), which uses the d6e instance's Cookie BFF under `/api/saas-auth/*`
+after the user already has a session. See
+[saas-oauth-bff.md](../d6e-workspace-api-client/references/saas-oauth-bff.md).
+
 ## Troubleshooting
+
+### `/auth/callback?error=…` redirects back to `/auth/login`
+
+d6e-auth rejected the authorize step and redirected to your callback with
+`?error=` (and optional `error_description=`) instead of `?code=`. This repo
+clears session + state cookies and sends the user to `/auth/login` — check
+server logs for the exact `error` value. Common values:
+
+| `error` | Meaning |
+| ------- | ------- |
+| `access_denied` | User cancelled at the provider or d6e-auth login form |
+| `invalid_request` | Malformed authorize request (missing `client_id`, bad `redirect_uri`, etc.) |
+| `invalid_client` | Unknown `client_id` |
+
+Fix the underlying authorize configuration (redirect URI registration, client id)
+and have the user submit the login form again — no code was issued, so there is
+nothing to exchange.
 
 ### Login form shows "Invalid client configuration" (400)
 
@@ -595,6 +633,11 @@ cookie. Have users log out and back in after a profile rename, or call
 
 | Document | Contents |
 | -------- | -------- |
+| [references/redirect-uris.md](references/redirect-uris.md) | Exact-match validation, loopback rules, franchise vs workspace registration, `d6e_workspace_id`, preview deploy URLs |
+| [references/cookie-transport-bridge.md](references/cookie-transport-bridge.md) | `auth-access` (custom FE) → `auth-token` (d6e Cookie BFF); never expose API keys in the browser |
+| [references/jwt-claims-and-lifetimes.md](references/jwt-claims-and-lifetimes.md) | Claims table (`sub`, `email`, `aud`, `d6e_workspace_id`, …); code 5 min / access 1h / refresh 30d; local decode vs `jwtVerify` |
+| [references/standalone-client-flow.md](references/standalone-client-flow.md) | Two-step exchange with `D6E_AUTH_CLIENT_SECRET`; when to use vs instance-brokered; `aud` diagnosis |
+| [references/operator-tokens.md](references/operator-tokens.md) | `D6E_INIT_REFRESH_TOKEN` vs `auth-refresh`; how to obtain; what `init-workspace.mjs` calls |
 | [references/token-kinds.md](references/token-kinds.md) | Instance JWT vs workspace-scoped JWT (`d6e_workspace_id`) vs API key `d6e_`; `reject_scoped_token` on `/api/v1/api-keys`; `jwtVerify` requires `aud` === `D6E_AUTH_CLIENT_ID` |
 | [references/custom-frontend-auth-decision-tree.md](references/custom-frontend-auth-decision-tree.md) | Browser Cookie BFF vs CI `d6e_*` key — when Bearer vs Cookie; never put API keys in the browser |
 | [references/platform-adapters.md](references/platform-adapters.md) | SvelteKit hooks pattern (this repo) vs Next.js App Router and Cloudflare Workers (cookies, OAuth callback on edge, async jobs — link to [platform-timeouts.md](../d6e-workspace-api-client/references/platform-timeouts.md)) |

@@ -49,6 +49,7 @@ Canonical d6e console wrappers:
   "カスタムFEに Gemini API キーは必要？" — **No**; see
   [llm-and-embedding-keys.md](references/llm-and-embedding-keys.md)
 - "Build RAG over uploaded files or SQL tables" — [rag-recipes.md](references/rag-recipes.md)
+- "Persist chat history / list sessions / generate titles" — [chat-sessions.md](references/chat-sessions.md)
 
 ## Core Concepts
 
@@ -150,6 +151,10 @@ Detailed guides (read before implementing):
 | Document | Contents |
 | -------- | -------- |
 | [references/api-catalog.md](references/api-catalog.md) | **Master index** — every useful `/api/v1` + BFF endpoint; auth column; detail links |
+| [references/workspaces.md](references/workspaces.md) | Workspace CRUD — PATCH policy groups, custom_prompt, auto_embed, Cookie subset |
+| [references/redirect-uris.md](references/redirect-uris.md) | OAuth redirect URI admin — Rust Bearer + Cookie BFF |
+| [references/chat-sessions.md](references/chat-sessions.md) | Chat session CRUD, UIMessage persistence, generate-title, 409 guard |
+| [references/transcribe.md](references/transcribe.md) | Whisper `GET/POST /api/transcribe` — Cookie, 25 MB, instance OPENAI_API_KEY |
 | [references/console-bff-catalog.md](references/console-bff-catalog.md) | Cookie BFF vs Rust dual routes — sql, files, chat, settings, … |
 | [references/saas-oauth-bff.md](references/saas-oauth-bff.md) | SaaS OAuth/PAT connect — Cookie BFF (custom FE can drive connect) |
 | [references/chat-streaming.md](references/chat-streaming.md) | POST /api/chat UIMessage stream — MCP, SQL HITL, memory, compaction |
@@ -191,7 +196,8 @@ Also documented in this skill:
   can drive connect via same-origin proxy; see
   [saas-oauth-bff.md](references/saas-oauth-bff.md).
 - **Chat sessions** — Cookie auth CRUD; title conventions in
-  [`src/lib/journal-title.ts`](../../src/lib/journal-title.ts). Cookie vs Bearer:
+  [`src/lib/journal-title.ts`](../../src/lib/journal-title.ts). Full API:
+  [chat-sessions.md](references/chat-sessions.md). Cookie vs Bearer:
   [auth-header-matrix.md](references/auth-header-matrix.md) and
   [api-catalog.md § SvelteKit Cookie surfaces](references/api-catalog.md).
 - **Integration doc** — [docs/d6e-api-integration.md](../../docs/d6e-api-integration.md).

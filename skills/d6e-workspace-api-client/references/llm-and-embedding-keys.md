@@ -167,6 +167,26 @@ Content-Type: application/json
 - Hosted models are still filtered at call time by entitlement `allowedModels`.
 - Indexed in [console-bff-catalog.md](./console-bff-catalog.md).
 
+### GET response shape
+
+`GET /api/workspaces/{workspaceId}/default-models` auto-creates a row on first
+read. Response (camelCase):
+
+```json
+{
+  "workspaceId": "018e…",
+  "chatProvider": "openai",
+  "chatModel": "gpt-5.6-luna",
+  "snsProvider": "openai",
+  "snsModel": "gpt-5.6-luna",
+  "createdAt": "2026-01-01T00:00:00.000Z",
+  "updatedAt": "2026-01-01T00:00:00.000Z"
+}
+```
+
+`DELETE` resets both pairs to `openai` / `gpt-5.6-luna` and returns the same
+shape.
+
 There is **no** public Rust `/api/v1/...` equivalent for default-models — custom
 frontends proxy the Cookie BFF (or instruct admins to set defaults in the d6e
 console). Embeddings have **no** equivalent workspace API either.
