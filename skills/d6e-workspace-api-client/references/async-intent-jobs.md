@@ -111,6 +111,21 @@ queued → running → succeeded
 }
 ```
 
+## First-pass vision (images and PDFs)
+
+On a current d6e instance, jpeg/png/gif/webp (under the vision size cap) and
+`application/pdf` in `inputFileRefs` are inlined on the **first**
+`generateText` — Storage data-URLs for images, MCP `d6e_view_image` (page
+JPEGs + OCR, max 20 pages) for PDFs. Custom frontends should still pass
+`inputFileRefs`; they do **not** rasterize locally and do **not** need a
+second job just to look at the voucher.
+
+The attached-files block marks those files `[VISIBLE]`. Files that fail
+rasterize, exceed the 20-image cap, or are Office docs stay `[NOT YET READ]`
+and still require `d6e_view_image` / `d6e_extract_file_text`.
+
+ai-keiri's 1-file-per-job contract is unchanged.
+
 ## Job limits
 
 **Request:** `GET /api/workflows/execute-by-intent/jobs/limits?workspaceId=<UUID>`
