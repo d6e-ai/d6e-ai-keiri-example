@@ -28,6 +28,7 @@ and [platform-timeouts.md](./platform-timeouts.md).
 | Method | Path | Purpose |
 | ------ | ---- | ------- |
 | `POST` | `/api/workflows/execute-by-intent/jobs` | Create job → `{ jobId }` |
+| `GET` | `/api/workflows/execute-by-intent/jobs/limits` | Cap + running count (`?workspaceId=`) |
 | `GET` | `/api/workflows/execute-by-intent/jobs/{id}` | Poll status, tool trace, result |
 | `POST` | `/api/workflows/execute-by-intent/jobs/{id}/cancel` | Cooperative cancel |
 
@@ -99,6 +100,36 @@ queued → running → succeeded
 **Response:** `{ "jobId": "019bbac4-…" }` (HTTP 200, not 202).
 
 **Errors:** `401`, `403`, `422`, `429` (concurrency cap), `500`.
+
+`429` JSON:
+
+```json
+{
+  "error": "Workspace has reached the maximum of 8 concurrent jobs. Please wait for an existing job to complete.",
+  "code": "WORKSPACE_JOB_CONCURRENCY",
+  "maxConcurrentJobs": 8
+}
+```
+
+## Job limits
+
+**Request:** `GET /api/workflows/execute-by-intent/jobs/limits?workspaceId=<UUID>`
+
+Bearer JWT. Same membership check as job create. The cap is instance env
+(`INTENT_JOB_MAX_RUNNING_PER_WORKSPACE`, default 8), not per-workspace config.
+
+**Response:**
+
+```json
+{
+  "maxConcurrentJobs": 8,
+  "runningCount": 2
+}
+```
+
+`runningCount` ignores jobs whose heartbeat is older than 60s. Custom
+frontends should size their dispatch queues from `maxConcurrentJobs`
+instead of hardcoding 3.
 
 ## Poll status
 
@@ -201,14 +232,14 @@ URLs to the browser.
 | Wall-clock cap | 30 min | `INTENT_JOB_TIMEOUT_MS` |
 | Step cap | 50 | `AGENT_RECURSION_LIMIT` |
 | Heartbeat stale | 60s | — (job → `failed` on stale poll) |
-| Workspace concurrency | 3 running jobs | — (429 on excess) |
+| Workspace concurrency | 8 running jobs | `INTENT_JOB_MAX_RUNNING_PER_WORKSPACE` (429 includes `maxConcurrentJobs`) |
 | Tool trace cap | 100 entries | — |
 
 ## Troubleshooting
 
 | Symptom | Cause | Action |
 | ------- | ----- | ------ |
-| `429` on create | 3 concurrent jobs per workspace | Wait, cancel one, or ask admin to raise limit |
+| `429` on create | Workspace at `maxConcurrentJobs` | Wait, cancel, or GET `/jobs/limits`; admin can raise `INTENT_JOB_MAX_RUNNING_PER_WORKSPACE` |
 | Stale `running` + old heartbeat | Runner killed mid-flight | d6e marks `failed` after 60s stale; check instance health |
 | `cancelled: false` | Job already terminal | Read poll `status` |
 | Result lost after tab close | No persistence | Use `waitUntil()` or rely on d6e `intent_job` row + reload poll |

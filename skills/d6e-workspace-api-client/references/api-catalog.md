@@ -432,6 +432,7 @@ instance root, not `/api/v1`.
 | ------ | ---- | ---- | ------- | ------ |
 | POST | `/api/workflows/execute-by-intent` | Bearer | Sync NL task (long-running) | [async-intent-jobs.md](./async-intent-jobs.md) |
 | POST | `/api/workflows/execute-by-intent/jobs` | Bearer | Create async job → `{ jobId }` | [async-intent-jobs.md](./async-intent-jobs.md) |
+| GET | `/api/workflows/execute-by-intent/jobs/limits` | Bearer | Workspace job cap + runningCount (`?workspaceId=`) | [async-intent-jobs.md](./async-intent-jobs.md) |
 | GET | `/api/workflows/execute-by-intent/jobs/{id}` | Bearer | Poll status / toolTrace / result | [async-intent-jobs.md](./async-intent-jobs.md) |
 | POST | `/api/workflows/execute-by-intent/jobs/{id}/cancel` | Bearer | Cooperative cancel | [async-intent-jobs.md](./async-intent-jobs.md) |
 
