@@ -13,7 +13,7 @@ string is identical whether sent as Bearer or `auth-token` cookie — only the
 | `/api/v1/workspaces/{id}/files/…`, `/documents/…` | **Header only** (path `{id}` ignored) | **Required** |
 | Top-level `/workflows`, `/stfs`, `/effects`, `/policies`, `/policy-groups`, `/pinned-charts`, `/api-keys`, `/audit-logs` | Header only | **Required** |
 | `/api/v1/saas-proxy`, `/api/v1/saas-proxy-download`, `/api/v1/drive-sync/*` | Body or query `workspace_id` (pin server-side) | Not used |
-| `/api/workflows/execute-by-intent`, `/api/workflows/execute-by-intent/jobs*` | Body `workspaceId` on create | Not used on poll/cancel |
+| `/api/workflows/execute-by-intent`, `/api/workflows/execute-by-intent/jobs*` | Body `workspaceId` on create; query `workspaceId` on GET `/jobs/limits` | Not used on poll/cancel |
 | `/api/chat-sessions`, `/api/workspace-prompt-rules` | Cookie session (`locals.user`) | N/A |
 
 ## Full endpoint table
@@ -35,6 +35,7 @@ string is identical whether sent as Bearer or `auth-token` cookie — only the
 | `GET/DELETE …/workspaces/{wsId}/invitations[/{id}]` | Bearer (admin) | Pending invite admin |
 | `POST /api/workflows/execute-by-intent` | Bearer | Body `workspaceId` server-pinned |
 | `* /api/workflows/execute-by-intent/jobs[/{id}[/cancel]]` | Bearer | Create pins `workspaceId` in body |
+| `GET /api/workflows/execute-by-intent/jobs/limits` | Bearer | Query `workspaceId`; `{ maxConcurrentJobs, runningCount }` |
 | `POST /api/v1/auth/token` | none | Refresh token in JSON body |
 | `* /api/v1/drive-sync/*` | Bearer | `workspace_id` in body or query |
 | `POST /api/v1/saas-proxy` | Bearer | `workspace_id` in body |

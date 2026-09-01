@@ -213,6 +213,7 @@ Also documented in this skill:
 | `deleteFile` | Bearer + `X-Workspace-ID` | Best-effort delete (404 = ok) |
 | `executeByIntent` | Bearer | Sync NL workflow; default 270s timeout |
 | `createAsyncIntentJob` | Bearer | Returns `{ jobId }` immediately |
+| `getIntentJobLimits` | Bearer | `{ maxConcurrentJobs, runningCount }` |
 | `getAsyncIntentJobStatus` | Bearer | Poll status / toolTrace / result |
 | `cancelAsyncIntentJob` | Bearer | Cooperative cancel |
 | `verifyWorkspaceMembership` | Bearer | Allow-list probe for `/auth/callback` |
@@ -269,7 +270,7 @@ export const POST: RequestHandler = async (event) => {
 | Workflow execute 400 missing header | No `X-Workspace-ID` | [auth-header-matrix.md](references/auth-header-matrix.md) |
 | `executeByIntent` 402 | Billing / entitlement gate | Surface message; admin fixes billing |
 | `executeByIntent` 504 timedOut | Wrapper shorter than LLM run | Lower timeout or use [async jobs](references/async-intent-jobs.md) |
-| Async job 429 | 3 concurrent jobs / workspace | Wait or cancel |
+| Async job 429 | Workspace at concurrency cap | GET `/jobs/limits` or wait; 429 JSON has `maxConcurrentJobs` |
 | `saas-proxy` 404 credential | Provider not connected | Connect via [saas-oauth-bff.md](references/saas-oauth-bff.md) |
 | `503 EMBEDDING_NOT_CONFIGURED` | Instance missing embedding env | Operator fixes `EMBEDDING_MODEL` + gateway — [llm-and-embedding-keys.md](references/llm-and-embedding-keys.md) |
 | `400 EMPTY_FILE_IDS` on file embed | Empty or missing `file_ids` | List files; pass explicit IDs — [embeddings.md](references/embeddings.md) |

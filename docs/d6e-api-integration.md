@@ -180,10 +180,11 @@ container), so the agent run continues in the background indefinitely
 | Method | Path | Purpose |
 |--------|------|---------|
 | `POST` | `/api/workflows/execute-by-intent/jobs` | Create a job; returns `jobId` immediately |
+| `GET` | `/api/workflows/execute-by-intent/jobs/limits` | Workspace cap + running count (`?workspaceId=`) |
 | `GET` | `/api/workflows/execute-by-intent/jobs/{id}` | Poll status, tool trace, and result |
 | `POST` | `/api/workflows/execute-by-intent/jobs/{id}/cancel` | Request cooperative cancellation |
 
-All three use `Authorization: Bearer <access_token>`.
+All four use `Authorization: Bearer <access_token>`.
 
 ### Create job — `POST /jobs`
 
@@ -225,8 +226,23 @@ Notes:
 - `401` — Missing or invalid Authorization header.
 - `403` — User not authorized for the workspace.
 - `422` — Invalid request body.
-- `429` — Workspace at the per-workspace concurrency cap (default 3).
+- `429` — Workspace at the per-workspace concurrency cap (default 8, `INTENT_JOB_MAX_RUNNING_PER_WORKSPACE`). Body includes `code: "WORKSPACE_JOB_CONCURRENCY"` and `maxConcurrentJobs`.
 - `500` — Internal error.
+
+### Job limits — `GET /jobs/limits?workspaceId=`
+
+Returns the instance cap and how many jobs are running in that workspace
+(heartbeat still fresh). Custom frontends should dispatch from
+`maxConcurrentJobs` instead of hardcoding a constant.
+
+```json
+{
+	"maxConcurrentJobs": 8,
+	"runningCount": 2
+}
+```
+
+**Error codes:** `401`, `403`, `422`.
 
 ### Poll status — `GET /jobs/{id}`
 
@@ -290,7 +306,7 @@ job status will transition to `cancelled` shortly after.
 | Wall-clock cap | 30 min | `AbortController` timeout; configurable via `INTENT_JOB_TIMEOUT_MS` |
 | Step cap | 50 | `AGENT_RECURSION_LIMIT` (shared with sync endpoint) |
 | Heartbeat stale | 60s | A running job whose heartbeat is older than this is assumed dead |
-| Workspace concurrency | 3 | Max running jobs per workspace; excess submissions get 429 |
+| Workspace concurrency | 8 | Max running jobs per workspace (`INTENT_JOB_MAX_RUNNING_PER_WORKSPACE`); excess submissions get 429 with `maxConcurrentJobs`. Read live values from `GET /api/workflows/execute-by-intent/jobs/limits?workspaceId=` |
 | Tool trace cap | 100 | Max entries in the `toolTrace` array |
 
 ### Integration pattern
