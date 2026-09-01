@@ -126,7 +126,9 @@ Notes:
   HTTP 400. This app injects the configured `D6E_WORKSPACE_ID` so callers
   never have to pass it.
 - `inputFileRefs` is optional. For purely textual questions (the `/ask`
-  page) it is omitted.
+  page) it is omitted. jpeg/png/gif/webp and `application/pdf` are
+  inlined on the first `generateText` by the d6e instance (Storage data-URL
+  or MCP `d6e_view_image` page JPEGs). The custom frontend does not rasterize.
 - `conversationContextBlock`, `snsSource`, and `externalConversationKey`
   are upstream-supported fields aimed at SNS bot proxies. We don't use
   them; revisions are handled by embedding the previous JSON in
